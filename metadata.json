@@ -1,0 +1,6 @@
+{
+  "name": "Xpotential Real Estate CRM",
+  "description": "A high-efficiency Dubai real estate CRM focused on zero-missed follow-ups for project off-plan leads and secondary market buyers/sellers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
