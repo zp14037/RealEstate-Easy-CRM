@@ -16,11 +16,14 @@ import {
   X,
   FileSpreadsheet,
   UploadCloud,
-  AlertCircle
+  AlertCircle,
+  CalendarPlus
 } from 'lucide-react';
 import { CustomTable, CustomTableRow } from '../types';
 import { EditableCell } from './EditableCell';
 import { useCrm } from '../context/CrmContext';
+import { saveDirectlyToGoogleCalendar } from '../utils/calendar';
+import { getDateOffset } from '../data/mockData';
 
 import { 
   parseSpreadsheetText, 
@@ -59,6 +62,62 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
   const [hasHeaderRow, setHasHeaderRow] = useState(true);
   const [columnMappings, setColumnMappings] = useState<Record<number, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [syncingRowId, setSyncingRowId] = useState<string | null>(null);
+
+  // Quick Preset Helper for Date column
+  const handleQuickPresetDate = (rowId: string, colKey: string, days: number, months: number) => {
+    const nextDate = getDateOffset(days, months);
+    handleCellChange(rowId, colKey, nextDate);
+  };
+
+  // Schedule Follow-up directly to Google Calendar
+  const handleSyncGoogleCalendar = async (row: CustomTableRow) => {
+    // Locate date column
+    const dateCol = table.columns.find(
+      (c) => c.type === 'date' || c.name.toLowerCase().includes('date') || c.name.toLowerCase().includes('follow')
+    );
+    const dateVal = dateCol ? row.data[dateCol.key] : null;
+
+    if (!dateVal) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'Please select a Follow-up Date first.', isError: true },
+        })
+      );
+      return;
+    }
+
+    // Locate client / owner name column
+    const nameCol = table.columns.find(
+      (c) => c.name.toLowerCase().includes('name') || c.name.toLowerCase().includes('client')
+    );
+    const nameVal = nameCol ? row.data[nameCol.key] : Object.values(row.data)[0] || 'Client';
+
+    // Locate phone / contact column
+    const telCol = table.columns.find(
+      (c) => c.type === 'tel' || c.name.toLowerCase().includes('phone') || c.name.toLowerCase().includes('contact')
+    );
+    const telVal = telCol ? row.data[telCol.key] : '';
+
+    setSyncingRowId(row.id);
+    const result = await saveDirectlyToGoogleCalendar(
+      {
+        ownerName: String(nameVal || 'Client'),
+        contactNo: String(telVal || ''),
+        projectName: table.name,
+        followUpDate: String(dateVal),
+        notes: `Follow-up reminder from custom table: ${table.name}`,
+      },
+      'project'
+    );
+    setSyncingRowId(null);
+
+    window.dispatchEvent(
+      new CustomEvent('crm-show-toast', {
+        detail: { msg: result.message, isError: !result.success },
+      })
+    );
+  };
 
   // Get rows belonging to this table
   const tableRows = useMemo(() => {
@@ -520,16 +579,80 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                           );
                         }
 
-                        // Special Date column
+                        // Special Date column with Google Calendar Sync and Presets
                         if (col.type === 'date') {
+                          const isFollowUpCol =
+                            col.name.toLowerCase().includes('follow') ||
+                            col.name.toLowerCase().includes('date');
+
                           return (
-                            <td key={col.id} className="p-0">
-                              <input
-                                type="date"
-                                value={cellValue}
-                                onChange={(e) => handleCellChange(row.id, col.key, e.target.value)}
-                                className="w-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none focus:bg-white text-slate-800 font-medium"
-                              />
+                            <td key={col.id} className="py-1 px-2">
+                              <div className="flex flex-col gap-1 min-w-[150px]">
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="date"
+                                    value={cellValue || ''}
+                                    onChange={(e) => handleCellChange(row.id, col.key, e.target.value)}
+                                    className="px-2 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-medium text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] transition-colors"
+                                  />
+                                  {isFollowUpCol && cellValue && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSyncGoogleCalendar(row)}
+                                      disabled={syncingRowId === row.id}
+                                      className="p-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition-colors cursor-pointer"
+                                      title="Schedule this date directly to Google Calendar"
+                                    >
+                                      {syncingRowId === row.id ? (
+                                        <span className="w-3 h-3 border-2 border-amber-800 border-t-transparent rounded-full animate-spin inline-block" />
+                                      ) : (
+                                        <CalendarPlus className="w-3.5 h-3.5 text-[#0B1B32]" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+
+                                {isFollowUpCol && (
+                                  <div className="flex items-center gap-1 text-[10px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickPresetDate(row.id, col.key, 0, 0)}
+                                      className="px-1.5 py-0.2 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer"
+                                    >
+                                      Today
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickPresetDate(row.id, col.key, 1, 0)}
+                                      className="px-1.5 py-0.2 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer"
+                                    >
+                                      +1d
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickPresetDate(row.id, col.key, 3, 0)}
+                                      className="px-1.5 py-0.2 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer"
+                                    >
+                                      +3d
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickPresetDate(row.id, col.key, 7, 0)}
+                                      className="px-1.5 py-0.2 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer"
+                                    >
+                                      +1w
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickPresetDate(row.id, col.key, 0, 4)}
+                                      title="Schedule follow-up in exactly 4 months"
+                                      className="px-1.5 py-0.2 rounded bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#0B1B32] border border-[#D4AF37]/40 font-bold cursor-pointer"
+                                    >
+                                      +4m ⏳
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </td>
                           );
                         }
@@ -585,6 +708,19 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                       {/* Row Actions */}
                       <td className="py-1 px-2 text-center select-none">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSyncGoogleCalendar(row)}
+                            disabled={syncingRowId === row.id}
+                            title="Schedule Follow-up to Google Calendar"
+                            className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded cursor-pointer"
+                          >
+                            {syncingRowId === row.id ? (
+                              <span className="w-3 h-3 border-2 border-amber-700 border-t-transparent rounded-full animate-spin inline-block" />
+                            ) : (
+                              <CalendarPlus className="w-3 h-3" />
+                            )}
+                          </button>
                           <button
                             type="button"
                             onClick={() => duplicateCustomTableRow(row.id)}

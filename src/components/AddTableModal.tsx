@@ -11,7 +11,9 @@ import {
   Phone, 
   Type, 
   ListFilter,
-  CheckCircle2
+  CheckCircle2,
+  CalendarPlus,
+  Lock
 } from 'lucide-react';
 import { CustomTable, CustomTableColumn } from '../types';
 
@@ -21,6 +23,15 @@ interface AddTableModalProps {
   onCreateTable: (table: Omit<CustomTable, 'id' | 'createdAt' | 'updatedAt'>) => void;
 }
 
+const DEFAULT_REQUIRED_COLUMNS: Array<{ name: string; type: CustomTableColumn['type']; isDefault?: boolean }> = [
+  { name: 'Client Name', type: 'text' },
+  { name: 'Contact Number', type: 'tel' },
+  { name: 'Budget AED', type: 'number' },
+  { name: 'Status', type: 'select', isDefault: true },
+  { name: 'Follow-up Date', type: 'date', isDefault: true },
+  { name: 'Notes', type: 'text' },
+];
+
 export const AddTableModal: React.FC<AddTableModalProps> = ({
   isOpen,
   onClose,
@@ -29,14 +40,9 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   const [tableName, setTableName] = useState('');
   const [description, setDescription] = useState('');
   const [quickInput, setQuickInput] = useState('');
-  const [columns, setColumns] = useState<Array<{ name: string; type: CustomTableColumn['type'] }>>([
-    { name: 'Client Name', type: 'text' },
-    { name: 'Contact Number', type: 'tel' },
-    { name: 'Budget AED', type: 'number' },
-    { name: 'Status', type: 'select' },
-    { name: 'Follow-up Date', type: 'date' },
-    { name: 'Notes', type: 'text' },
-  ]);
+  const [columns, setColumns] = useState<Array<{ name: string; type: CustomTableColumn['type']; isDefault?: boolean }>>(
+    DEFAULT_REQUIRED_COLUMNS
+  );
 
   if (!isOpen) return null;
 
@@ -71,7 +77,7 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
 
     if (names.length === 0) return;
 
-    const parsedCols: Array<{ name: string; type: CustomTableColumn['type'] }> = names.map((name) => {
+    const parsedCols: Array<{ name: string; type: CustomTableColumn['type']; isDefault?: boolean }> = names.map((name) => {
       const lower = name.toLowerCase();
       let type: CustomTableColumn['type'] = 'text';
       if (lower.includes('phone') || lower.includes('mobile') || lower.includes('contact') || lower.includes('tel')) {
@@ -85,6 +91,18 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
       }
       return { name, type };
     });
+
+    // Ensure Status is always present
+    const hasStatus = parsedCols.some((c) => c.name.toLowerCase().includes('status') || c.type === 'select');
+    if (!hasStatus) {
+      parsedCols.push({ name: 'Status', type: 'select', isDefault: true });
+    }
+
+    // Ensure Follow-up Date is always present for Google Calendar scheduling
+    const hasFollowUp = parsedCols.some((c) => c.name.toLowerCase().includes('follow') || c.type === 'date');
+    if (!hasFollowUp) {
+      parsedCols.push({ name: 'Follow-up Date', type: 'date', isDefault: true });
+    }
 
     setColumns(parsedCols);
     setQuickInput('');
@@ -101,8 +119,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Client Type', type: 'select' },
         { name: 'Budget AED', type: 'number' },
         { name: 'Requirements', type: 'text' },
-        { name: 'Status', type: 'select' },
-        { name: 'Follow-up Date', type: 'date' },
+        { name: 'Status', type: 'select', isDefault: true },
+        { name: 'Follow-up Date', type: 'date', isDefault: true },
         { name: 'Notes', type: 'text' },
       ]);
     } else if (presetName === 'investors') {
@@ -113,8 +131,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Target Community', type: 'text' },
         { name: 'Max Budget AED', type: 'number' },
         { name: 'Expected ROI %', type: 'number' },
-        { name: 'Stage', type: 'select' },
-        { name: 'Meeting Date', type: 'date' },
+        { name: 'Status', type: 'select', isDefault: true },
+        { name: 'Follow-up Date', type: 'date', isDefault: true },
         { name: 'Investment Notes', type: 'text' },
       ]);
     } else if (presetName === 'inventory') {
@@ -126,7 +144,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Size SqFt', type: 'number' },
         { name: 'Selling Price AED', type: 'number' },
         { name: 'Owner Contact', type: 'tel' },
-        { name: 'Listing Status', type: 'select' },
+        { name: 'Status', type: 'select', isDefault: true },
+        { name: 'Follow-up Date', type: 'date', isDefault: true },
         { name: 'Key Notes', type: 'text' },
       ]);
     }
@@ -135,19 +154,31 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanTableName = tableName.trim() || 'Untitled Table';
-    const cleanColumns: CustomTableColumn[] = columns
-      .filter((c) => c.name.trim().length > 0)
-      .map((c, idx) => ({
-        id: `col_${Date.now()}_${idx}`,
-        key: `col_${c.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${idx}`,
-        name: c.name.trim(),
-        type: c.type,
-      }));
 
-    if (cleanColumns.length === 0) {
-      alert('Please add at least one column.');
-      return;
+    let finalColumns = [...columns].filter((c) => c.name.trim().length > 0);
+
+    // Guaranteed Status column by default
+    const hasStatus = finalColumns.some(
+      (c) => c.name.toLowerCase() === 'status' || c.type === 'select'
+    );
+    if (!hasStatus) {
+      finalColumns.push({ name: 'Status', type: 'select', isDefault: true });
     }
+
+    // Guaranteed Follow-up Date column by default for Google Calendar
+    const hasFollowUpDate = finalColumns.some(
+      (c) => c.name.toLowerCase().includes('follow') || c.type === 'date'
+    );
+    if (!hasFollowUpDate) {
+      finalColumns.push({ name: 'Follow-up Date', type: 'date', isDefault: true });
+    }
+
+    const cleanColumns: CustomTableColumn[] = finalColumns.map((c, idx) => ({
+      id: `col_${Date.now()}_${idx}`,
+      key: `col_${c.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${idx}`,
+      name: c.name.trim(),
+      type: c.type,
+    }));
 
     onCreateTable({
       name: cleanTableName,
@@ -165,8 +196,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-[#0B1B32] px-6 py-4 text-white flex items-center justify-between border-b border-amber-400/30">
-          <div className="flex items-center gap-2.5">
+        <div className="bg-[#0B1B32] text-white px-6 py-4 flex items-center justify-between border-b border-[#D4AF37]/50">
+          <div className="flex items-center gap-3">
             <div className="p-2 rounded bg-amber-400/10 text-amber-400 border border-amber-400/20">
               <TableProperties className="w-5 h-5" />
             </div>
@@ -187,94 +218,119 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
           </button>
         </div>
 
-        {/* Content Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Table Name */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Table Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Luxury Buyers, Commercial Properties, Palm Penthouse List..."
-              value={tableName}
-              onChange={(e) => setTableName(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#0B1B32] focus:bg-white transition-all font-medium"
-            />
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5 text-xs text-slate-700 flex-1">
+          {/* Calendar Notice Banner */}
+          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200/80 flex items-start gap-2.5">
+            <CalendarPlus className="w-4 h-4 text-[#D4AF37] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-[#0B1B32]">
+                Google Calendar & Pipeline Sync Active
+              </p>
+              <p className="text-slate-600 mt-0.5">
+                Every table includes <strong className="text-slate-900">"Status"</strong> and <strong className="text-slate-900">"Follow-up Date"</strong> by default. This enables instant 1-click scheduling to your Google Calendar and tracking in Today's Action Feed.
+              </p>
+            </div>
+          </div>
+
+          {/* Table Name & Description */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Table Name *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. VIP Investors, Buyers & Sellers, Commercial Leads"
+                value={tableName}
+                onChange={(e) => setTableName(e.target.value)}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0B1B32] focus:bg-white font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Description / Purpose (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Off-market buyer requests, direct villa inventory, etc."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0B1B32] focus:bg-white"
+              />
+            </div>
           </div>
 
           {/* Quick Presets */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-slate-600 flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                Quick Templates:
-              </span>
-            </div>
+          <div className="pt-2 border-t border-slate-200">
+            <span className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              Quick Industry Presets:
+            </span>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => applyPreset('secondary')}
-                className="px-2.5 py-1 text-xs rounded bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors font-medium cursor-pointer"
+                className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold border border-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
               >
-                + Buyers & Sellers Template
+                <Sparkles className="w-3 h-3 text-[#D4AF37]" />
+                Buyers & Sellers (Secondary)
               </button>
               <button
                 type="button"
                 onClick={() => applyPreset('investors')}
-                className="px-2.5 py-1 text-xs rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors font-medium cursor-pointer"
+                className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold border border-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
               >
-                + VIP Investors Template
+                <Sparkles className="w-3 h-3 text-[#D4AF37]" />
+                VIP High-Net-Worth Investors
               </button>
               <button
                 type="button"
                 onClick={() => applyPreset('inventory')}
-                className="px-2.5 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors font-medium cursor-pointer"
+                className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold border border-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
               >
-                + Direct Units Inventory
+                <Sparkles className="w-3 h-3 text-[#D4AF37]" />
+                Direct Units Inventory
               </button>
             </div>
           </div>
 
-          {/* Fast Comma-separated Column Generator */}
-          <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200">
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              ⚡ Paste or Type Column Names (Comma-separated)
+          {/* Quick Paste Columns via Comma separated */}
+          <div className="pt-2 border-t border-slate-200">
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+              Add multiple columns quickly (comma-separated):
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="e.g. Name, Phone, Budget AED, Area, Status, Date, Notes"
                 value={quickInput}
                 onChange={(e) => setQuickInput(e.target.value)}
+                placeholder="e.g. Full Name, WhatsApp, Budget, Preferred Location"
+                className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:border-[#0B1B32] focus:bg-white"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     handleApplyQuickInput();
                   }
                 }}
-                className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#0B1B32]"
               />
               <button
                 type="button"
                 onClick={handleApplyQuickInput}
-                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold rounded transition-colors cursor-pointer"
+                className="px-3 py-1.5 bg-[#0B1B32] hover:bg-[#152945] text-white text-xs font-bold rounded-md transition-colors cursor-pointer"
               >
-                Set Columns
+                Apply
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Automatically detects column types like Phone, Number, Date, or Status.
-            </p>
           </div>
 
-          {/* Column Designer List */}
-          <div>
+          {/* Defined Columns Editor */}
+          <div className="pt-2 border-t border-slate-200">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Columns3 className="w-4 h-4 text-[#0B1B32]" />
-                Defined Columns ({columns.length})
+              <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <Columns3 className="w-4 h-4 text-[#D4AF37]" />
+                <span>Table Columns ({columns.length})</span>
               </label>
               <button
                 type="button"
@@ -287,51 +343,73 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
             </div>
 
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-              {columns.map((col, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2 p-2 bg-white rounded border border-slate-200 hover:border-slate-300 transition-colors shadow-2xs"
-                >
-                  <span className="w-6 text-center text-xs font-mono font-bold text-slate-400">
-                    {String.fromCharCode(65 + (idx % 26))}
-                  </span>
+              {columns.map((col, idx) => {
+                const isStatusOrFollowUp =
+                  col.name.toLowerCase() === 'status' ||
+                  col.name.toLowerCase() === 'follow-up date' ||
+                  col.name.toLowerCase() === 'follow up date' ||
+                  col.isDefault;
 
-                  <input
-                    type="text"
-                    required
-                    placeholder={`Column ${idx + 1}`}
-                    value={col.name}
-                    onChange={(e) => handleColumnNameChange(idx, e.target.value)}
-                    className="flex-1 px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32]"
-                  />
-
-                  <select
-                    value={col.type}
-                    onChange={(e) => handleColumnTypeChange(idx, e.target.value as any)}
-                    className="px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded text-slate-700 font-medium focus:outline-none focus:border-[#0B1B32]"
-                  >
-                    <option value="text">📝 Text</option>
-                    <option value="tel">📞 Phone / WhatsApp</option>
-                    <option value="number">💰 Number / AED</option>
-                    <option value="date">📅 Date</option>
-                    <option value="select">🏷️ Status / Tag</option>
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveColumn(idx)}
-                    disabled={columns.length <= 1}
-                    className={`p-1.5 rounded transition-colors ${
-                      columns.length <= 1
-                        ? 'text-slate-200 cursor-not-allowed'
-                        : 'text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer'
+                return (
+                  <div
+                    key={idx}
+                    className={`flex items-center gap-2 p-2 bg-white rounded border transition-colors shadow-2xs ${
+                      isStatusOrFollowUp
+                        ? 'border-amber-300 bg-amber-50/20'
+                        : 'border-slate-200 hover:border-slate-300'
                     }`}
-                    title="Remove Column"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+                    <span className="w-6 text-center text-xs font-mono font-bold text-slate-400">
+                      {String.fromCharCode(65 + (idx % 26))}
+                    </span>
+
+                    <input
+                      type="text"
+                      required
+                      placeholder={`Column ${idx + 1}`}
+                      value={col.name}
+                      onChange={(e) => handleColumnNameChange(idx, e.target.value)}
+                      className="flex-1 px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32]"
+                    />
+
+                    <select
+                      value={col.type}
+                      onChange={(e) => handleColumnTypeChange(idx, e.target.value as any)}
+                      className="px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded text-slate-700 font-medium focus:outline-none focus:border-[#0B1B32]"
+                    >
+                      <option value="text">📝 Text</option>
+                      <option value="tel">📞 Phone / WhatsApp</option>
+                      <option value="number">💰 Number / AED</option>
+                      <option value="date">📅 Date (Google Calendar)</option>
+                      <option value="select">🏷️ Status / Tag</option>
+                    </select>
+
+                    {isStatusOrFollowUp ? (
+                      <span
+                        className="p-1.5 text-amber-600 bg-amber-100 rounded text-[10px] font-bold flex items-center gap-1 select-none"
+                        title="Default column required for Google Calendar scheduling & Action Feed"
+                      >
+                        <Lock className="w-3 h-3" />
+                        <span className="hidden sm:inline">Default</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveColumn(idx)}
+                        disabled={columns.length <= 1}
+                        className={`p-1.5 rounded transition-colors ${
+                          columns.length <= 1
+                            ? 'text-slate-200 cursor-not-allowed'
+                            : 'text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer'
+                        }`}
+                        title="Remove Column"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </form>

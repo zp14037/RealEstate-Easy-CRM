@@ -18,11 +18,18 @@ import {
   AlertCircle,
   Table as TableIcon,
   Plus,
-  Trash2
+  Trash2,
+  LogOut
 } from 'lucide-react';
 import { getDateOffset, getTodayDateString } from './data/mockData';
+import { LoginPage } from './components/LoginPage';
 
-const CrmMainLayout: React.FC = () => {
+interface CrmMainLayoutProps {
+  onLogout: () => void;
+  currentUser: string;
+}
+
+const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) => {
   const { 
     activeTab, 
     setActiveTab, 
@@ -244,16 +251,23 @@ const CrmMainLayout: React.FC = () => {
         </nav>
 
         {/* User Profile Footer */}
-        <div className="p-5 border-t border-white/10 bg-[#071324]">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-[#D4AF37] flex items-center justify-center text-[#0B1B32] font-bold text-xs">
-              XP
+        <div className="p-4 border-t border-white/10 bg-[#071324] flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded bg-[#D4AF37] flex items-center justify-center text-[#0B1B32] font-bold text-xs shrink-0">
+              ZO
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">Agent Portal</p>
-              <p className="text-[10px] text-slate-400 truncate">Excel Paradigm · Dubai</p>
+              <p className="text-xs font-semibold text-white truncate">{currentUser}</p>
+              <p className="text-[10px] text-emerald-400 font-semibold truncate">Active Session</p>
             </div>
           </div>
+          <button
+            onClick={onLogout}
+            title="Log Out"
+            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </aside>
 
@@ -271,11 +285,17 @@ const CrmMainLayout: React.FC = () => {
             </button>
             <span className="text-lg font-bold tracking-tight text-[#D4AF37] font-display">XPOTENTIAL</span>
           </div>
-          <span className="text-xs text-slate-400">Dubai CRM</span>
+          <button
+            onClick={onLogout}
+            className="text-xs text-slate-300 hover:text-white flex items-center gap-1 bg-white/10 px-2 py-1 rounded"
+          >
+            <LogOut className="w-3 h-3" />
+            <span>Logout</span>
+          </button>
         </div>
 
         {/* Top Header Bar */}
-        <HeaderNav />
+        <HeaderNav onLogout={onLogout} currentUser={currentUser} />
 
         {/* Workspace Views */}
         <main className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
@@ -347,9 +367,27 @@ const CrmMainLayout: React.FC = () => {
 };
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<string | null>(() => {
+    return localStorage.getItem('crm_auth_user') || sessionStorage.getItem('crm_auth_user');
+  });
+
+  const handleLoginSuccess = (user: string) => {
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('crm_auth_user');
+    sessionStorage.removeItem('crm_auth_user');
+    setCurrentUser(null);
+  };
+
+  if (!currentUser) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <CrmProvider>
-      <CrmMainLayout />
+      <CrmMainLayout onLogout={handleLogout} currentUser={currentUser} />
     </CrmProvider>
   );
 }
