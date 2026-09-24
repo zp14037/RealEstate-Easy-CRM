@@ -14,9 +14,7 @@ import {
   Sparkles,
   ChevronDown,
   ClipboardPaste,
-  FileSpreadsheet,
-  Database,
-  RefreshCw
+  FileSpreadsheet
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { ActiveTab } from '../types';
@@ -38,9 +36,7 @@ export const HeaderNav: React.FC = () => {
     bulkAddSecondaryLeads,
     exportToCsv,
     searchQuery,
-    setSearchQuery,
-    isDbConnected,
-    refreshFromDb
+    setSearchQuery
   } = useCrm();
 
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -115,39 +111,6 @@ export const HeaderNav: React.FC = () => {
               className="absolute right-2.5 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               ✕
-            </button>
-          )}
-        </div>
-
-        {/* Supabase PostgreSQL Database Status & Connection Button */}
-        <div className="flex items-center gap-1.5">
-          <button
-            id="supabase-connect-btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('crm-open-supabase-modal'))}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-semibold shadow-xs transition-all cursor-pointer ${
-              isDbConnected 
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 animate-pulse'
-            }`}
-            title="Configure Supabase PostgreSQL Connection"
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              {isDbConnected ? 'Supabase' : 'Connect Supabase'}
-            </span>
-            <span className={`w-2 h-2 rounded-full ${isDbConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          </button>
-
-          {isDbConnected && (
-            <button
-              onClick={async () => {
-                await refreshFromDb();
-                window.dispatchEvent(new CustomEvent('crm-show-toast', { detail: { msg: 'Synced with Supabase database' } }));
-              }}
-              title="Refresh / Fetch fresh data from Supabase DB"
-              className="p-1.5 rounded-md bg-white hover:bg-slate-50 text-slate-500 hover:text-[#0B1B32] border border-slate-200 transition-colors shadow-xs cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
         </div>

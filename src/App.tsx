@@ -19,8 +19,6 @@ import {
 } from 'lucide-react';
 import { getDateOffset, getTodayDateString } from './data/mockData';
 
-import { SupabaseConnectModal } from './components/SupabaseConnectModal';
-
 const CrmMainLayout: React.FC = () => {
   const { 
     activeTab, 
@@ -34,7 +32,6 @@ const CrmMainLayout: React.FC = () => {
   } = useCrm();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [supabaseModalOpen, setSupabaseModalOpen] = useState(false);
   const [toast, setToast] = useState<{ show: boolean; msg: string; isError?: boolean }>({ show: false, msg: '' });
 
   React.useEffect(() => {
@@ -45,16 +42,10 @@ const CrmMainLayout: React.FC = () => {
       }, 4000);
     };
 
-    const handleOpenSupabaseModal = () => {
-      setSupabaseModalOpen(true);
-    };
-
     window.addEventListener('crm-show-toast', handleToast);
-    window.addEventListener('crm-open-supabase-modal', handleOpenSupabaseModal);
 
     return () => {
       window.removeEventListener('crm-show-toast', handleToast);
-      window.removeEventListener('crm-open-supabase-modal', handleOpenSupabaseModal);
     };
   }, []);
 
@@ -314,12 +305,6 @@ const CrmMainLayout: React.FC = () => {
           <span>{toast.msg}</span>
         </div>
       )}
-
-      {/* Supabase PostgreSQL Configuration & Setup Modal */}
-      <SupabaseConnectModal 
-        isOpen={supabaseModalOpen} 
-        onClose={() => setSupabaseModalOpen(false)} 
-      />
 
     </div>
   );

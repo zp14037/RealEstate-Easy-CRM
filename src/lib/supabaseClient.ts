@@ -3,15 +3,18 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const STORAGE_KEY_SUPABASE_URL = 'xpotential_supabase_url';
 const STORAGE_KEY_SUPABASE_KEY = 'xpotential_supabase_anon_key';
 
+export const DEFAULT_SUPABASE_URL = 'https://hhopbucqowbfsbsvgojx.supabase.co';
+export const DEFAULT_SUPABASE_KEY = 'sb_publishable_3mZetElcqA85YeHcx400vA_fZfNAybv';
+
 export function getSupabaseUrl(): string {
   try {
     return (
       (import.meta as any).env?.VITE_SUPABASE_URL ||
       localStorage.getItem(STORAGE_KEY_SUPABASE_URL) ||
-      ''
+      DEFAULT_SUPABASE_URL
     );
   } catch {
-    return '';
+    return DEFAULT_SUPABASE_URL;
   }
 }
 
@@ -20,10 +23,10 @@ export function getSupabaseAnonKey(): string {
     return (
       (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
       localStorage.getItem(STORAGE_KEY_SUPABASE_KEY) ||
-      ''
+      DEFAULT_SUPABASE_KEY
     );
   } catch {
-    return '';
+    return DEFAULT_SUPABASE_KEY;
   }
 }
 
