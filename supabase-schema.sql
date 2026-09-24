@@ -63,3 +63,36 @@ CREATE POLICY "Public access on secondary_leads" ON secondary_leads
 -- 4. Enable Realtime subscriptions so all connected devices update live
 ALTER PUBLICATION supabase_realtime ADD TABLE project_leads;
 ALTER PUBLICATION supabase_realtime ADD TABLE secondary_leads;
+
+-- 5. Create Custom Tables & Dynamic Rows (User Defined Tables)
+CREATE TABLE IF NOT EXISTS custom_tables (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  columns JSONB DEFAULT '[]'::jsonb,
+  "createdAt" TIMESTAMPTZ DEFAULT now(),
+  "updatedAt" TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS custom_table_rows (
+  id TEXT PRIMARY KEY,
+  "tableId" TEXT NOT NULL,
+  data JSONB DEFAULT '{}'::jsonb,
+  "createdAt" TIMESTAMPTZ DEFAULT now(),
+  "updatedAt" TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE custom_tables ENABLE ROW LEVEL SECURITY;
+ALTER TABLE custom_table_rows ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public access on custom_tables" ON custom_tables;
+CREATE POLICY "Public access on custom_tables" ON custom_tables
+  FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access on custom_table_rows" ON custom_table_rows;
+CREATE POLICY "Public access on custom_table_rows" ON custom_table_rows
+  FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE custom_tables;
+ALTER PUBLICATION supabase_realtime ADD TABLE custom_table_rows;
+

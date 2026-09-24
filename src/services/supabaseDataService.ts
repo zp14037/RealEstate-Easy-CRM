@@ -138,3 +138,126 @@ export async function bulkInsertSecondaryLeadsToDb(leads: SecondaryLead[]): Prom
   }
   return true;
 }
+
+// ============================================================================
+// Custom Tables & Rows CRUD (Dynamic User-Defined Tables)
+// ============================================================================
+
+export async function fetchCustomTablesFromDb(): Promise<any[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('custom_tables')
+      .select('*')
+      .order('createdAt', { ascending: true });
+
+    if (error) {
+      // Table might not exist yet if user hasn't run the SQL migration
+      return [];
+    }
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCustomTableToDb(table: any): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.from('custom_tables').upsert([table]);
+    if (error) {
+      console.warn('Supabase custom_tables upsert:', error.message);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCustomTableFromDb(tableId: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    await client.from('custom_table_rows').delete().eq('tableId', tableId);
+    await client.from('custom_tables').delete().eq('id', tableId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchCustomTableRowsFromDb(tableId: string): Promise<any[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('custom_table_rows')
+      .select('*')
+      .eq('tableId', tableId)
+      .order('createdAt', { ascending: false });
+
+    if (error) return [];
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function insertCustomTableRowToDb(row: any): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.from('custom_table_rows').insert([row]);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function updateCustomTableRowInDb(rowId: string, data: Record<string, any>): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client
+      .from('custom_table_rows')
+      .update({ data, updatedAt: new Date().toISOString() })
+      .eq('id', rowId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCustomTableRowFromDb(rowId: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.from('custom_table_rows').delete().eq('id', rowId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function bulkInsertCustomTableRowsToDb(rows: any[]): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client || rows.length === 0) return false;
+
+  try {
+    const { error } = await client.from('custom_table_rows').insert(rows);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+

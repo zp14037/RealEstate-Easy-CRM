@@ -51,7 +51,32 @@ export interface SecondaryLead {
   updatedAt: string;
 }
 
-export type ActiveTab = 'dashboard' | 'project_leads' | 'secondary_leads';
+export interface CustomTableColumn {
+  id: string;
+  key: string;
+  name: string;
+  type: 'text' | 'number' | 'date' | 'tel' | 'select';
+  options?: string[];
+}
+
+export interface CustomTable {
+  id: string;
+  name: string;
+  description?: string;
+  columns: CustomTableColumn[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomTableRow {
+  id: string;
+  tableId: string;
+  data: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ActiveTab = 'dashboard' | 'project_leads' | 'secondary_leads' | string;
 
 export interface ActionItem {
   id: string;

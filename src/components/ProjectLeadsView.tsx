@@ -52,6 +52,7 @@ export const ProjectLeadsView: React.FC = () => {
     bulkAddProjectLeads, 
     deleteProjectLead, 
     duplicateProjectLead, 
+    clearProjectLeads,
     exportToCsv,
     searchQuery,
     setSearchQuery 
@@ -178,10 +179,10 @@ export const ProjectLeadsView: React.FC = () => {
             <button
               onClick={() => setIsBulkPasteOpen(true)}
               className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Paste raw rows directly from Excel or Google Sheets"
+              title="Upload or import spreadsheet rows directly from Excel (.xlsx, .xls, .csv)"
             >
-              <ClipboardPaste className="w-3.5 h-3.5 text-[#0B1B32]" />
-              <span>Bulk Paste from Excel</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-[#0B1B32]" />
+              <span>Bulk Import from Excel</span>
             </button>
 
             <button
@@ -191,6 +192,21 @@ export const ProjectLeadsView: React.FC = () => {
               <Download className="w-3.5 h-3.5 text-slate-500" />
               <span>Export CSV</span>
             </button>
+
+            {projectLeads.length > 0 && (
+              <button
+                onClick={() => {
+                  if (window.confirm(`Are you sure you want to delete all ${projectLeads.length} rows from Project Leads? This action cannot be undone.`)) {
+                    clearProjectLeads();
+                  }
+                }}
+                className="px-3 py-1.5 rounded bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold border border-red-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Delete all rows in Project Leads table"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                <span>Delete All Rows</span>
+              </button>
+            )}
 
             <button
               id="add-blank-row-top"

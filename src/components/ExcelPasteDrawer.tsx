@@ -1,267 +1,573 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  ClipboardPaste, 
   FileSpreadsheet, 
-  Upload, 
+  UploadCloud, 
   CheckCircle2, 
-  AlertCircle, 
   X, 
-  Sparkles,
-  ArrowRight,
-  HelpCircle
+  Sparkles, 
+  HelpCircle, 
+  Download, 
+  FileText, 
+  ClipboardPaste,
+  AlertCircle
 } from 'lucide-react';
-import { ProjectLead, SecondaryLead } from '../types';
+import { ProjectLead } from '../types';
 import { getTodayDateString } from '../data/mockData';
+import { 
+  parseSpreadsheetText, 
+  parseExcelFile, 
+  downloadExcelTemplate, 
+  guessColumnMapping 
+} from '../utils/spreadsheetParser';
 
 interface ExcelPasteDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   targetSheet: 'project' | 'secondary';
   onImportProjects: (leads: Partial<ProjectLead>[]) => void;
-  onImportSecondary: (leads: Partial<SecondaryLead>[]) => void;
+  onImportSecondary?: (leads: any[]) => void;
 }
+
+const PROJECT_COLUMNS: { key: keyof ProjectLead; name: string }[] = [
+  { key: 'ownerName', name: 'Client / Owner Name' },
+  { key: 'contactNo', name: 'Contact Phone / Mobile' },
+  { key: 'projectName', name: 'Project / Property Name' },
+  { key: 'developer', name: 'Developer (e.g. Emaar, Sobha)' },
+  { key: 'community', name: 'Community / Location' },
+  { key: 'unitDetails', name: 'Unit Details (e.g. 2BR, 1350 sqft)' },
+  { key: 'propertyType', name: 'Property Type' },
+  { key: 'budgetAED', name: 'Budget (AED)' },
+  { key: 'handoverDetails', name: 'Handover Date' },
+  { key: 'notes', name: 'Notes / Remarks' },
+];
 
 export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
   isOpen,
   onClose,
-  targetSheet,
   onImportProjects,
-  onImportSecondary,
 }) => {
+  const [activeMode, setActiveMode] = useState<'upload' | 'paste'>('upload');
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [rawText, setRawText] = useState('');
-  const [parsedRows, setParsedRows] = useState<any[]>([]);
-  const [hasParsed, setHasParsed] = useState(false);
+  const [parsedMatrix, setParsedMatrix] = useState<string[][]>([]);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [hasHeaderRow, setHasHeaderRow] = useState(true);
+  const [columnMappings, setColumnMappings] = useState<Record<number, string>>({});
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  // Reset when closed or opened
+  useEffect(() => {
+    if (!isOpen) {
+      setUploadedFile(null);
+      setRawText('');
+      setParsedMatrix([]);
+      setParseError(null);
+      setColumnMappings({});
+    }
+  }, [isOpen]);
 
-  // Clean and parse tab-delimited (Excel/Google Sheets copy) or CSV text
-  const handleParse = (textToParse: string = rawText) => {
-    if (!textToParse.trim()) {
-      setParsedRows([]);
-      setHasParsed(false);
+  // Handle text paste parsing
+  useEffect(() => {
+    if (activeMode === 'paste') {
+      const matrix = parseSpreadsheetText(rawText);
+      setParsedMatrix(matrix);
+      setParseError(null);
+    }
+  }, [rawText, activeMode]);
+
+  // Detected column count
+  const detectedColCount = useMemo(() => {
+    if (parsedMatrix.length === 0) return 0;
+    return Math.max(...parsedMatrix.map((r) => r.length));
+  }, [parsedMatrix]);
+
+  // Auto-detect column mappings whenever parsedMatrix changes
+  useEffect(() => {
+    if (parsedMatrix.length === 0) {
+      setColumnMappings({});
       return;
     }
 
-    const lines = textToParse
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    const firstRow = parsedMatrix[0] || [];
+    const targets = PROJECT_COLUMNS.map((c) => ({ key: c.key as string, name: c.name }));
 
-    const results: any[] = [];
-
-    lines.forEach((line) => {
-      // Check if tab-delimited or comma-delimited
-      let cells: string[] = [];
-      if (line.includes('\t')) {
-        cells = line.split('\t').map((c) => c.trim().replace(/^["']|["']$/g, ''));
-      } else {
-        // Simple CSV splitter handling quoted values
-        cells = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((c) => c.trim().replace(/^["']|["']$/g, ''));
-      }
-
-      if (cells.length === 0 || cells.every((c) => !c)) return;
-
-      if (targetSheet === 'project') {
-        // Map 11 potential project columns or raw subset (Project Name, Developer, Community, Unit, Type, Handover, Visited, Owner, Contact)
-        const row: Partial<ProjectLead> = {
-          projectName: cells[0] || 'Off-Plan Project',
-          developer: cells[1] || 'Emaar Properties',
-          community: cells[2] || 'Dubai',
-          unitDetails: cells[3] || '',
-          propertyType: (cells[4] as any) || 'Apartment',
-          handoverDetails: cells[5] || 'Q4 2026',
-          visitedDate: cells[6] || getTodayDateString(),
-          ownerName: cells[7] || cells[0] || 'New Lead',
-          contactNo: cells[8] || (cells[1] && /^[\d+ -]{7,}$/.test(cells[1]) ? cells[1] : ''),
-          callStatus: 'New', // Left ready for agent to inline edit
-          followUpDate: '', // Left blank for agent to schedule
-          notes: cells[9] || 'Pasted from Excel list',
-        };
-        // Smart fallback if raw lead is just [Name, Phone, Property]
-        if (cells.length <= 3) {
-          row.ownerName = cells[0] || 'Raw Lead';
-          row.contactNo = cells[1] || '';
-          row.projectName = cells[2] || 'Interest Pending';
-        }
-        results.push(row);
-      } else {
-        // Secondary Market: Name, Mobile, Property, Client Type, Date, Budget, Expectation/Requirements
-        const rawBudget = cells[5] ? Number(cells[5].replace(/[^0-9]/g, '')) : 0;
-        const row: Partial<SecondaryLead> = {
-          name: cells[0] || 'New Client',
-          mobile: cells[1] || '',
-          property: cells[2] || 'Dubai Property',
-          clientType: (cells[3] === 'Seller' || cells[3] === 'seller' ? 'Seller' : 'Buyer'),
-          dateContacted: cells[4] || getTodayDateString(),
-          budget: rawBudget || 2000000,
-          expectationRequirements: cells[6] || cells[3] || 'Raw lead requirement',
-          remarksStatus: 'New Lead',
-          followUpDate: '', // Left blank for agent to schedule
-          notes: cells[7] || 'Pasted from Excel list',
-        };
-        if (cells.length <= 3) {
-          row.name = cells[0] || 'Raw Client';
-          row.mobile = cells[1] || '';
-          row.property = cells[2] || 'General Inquiry';
-        }
-        results.push(row);
-      }
+    // Detect if first row looks like a header
+    const looksLikeHeader = firstRow.some((val) => {
+      const v = val.toLowerCase();
+      return /name|phone|contact|mobile|budget|price|status|date|notes|project|developer|community|unit|id/i.test(v);
     });
+    setHasHeaderRow(looksLikeHeader);
 
-    setParsedRows(results);
-    setHasParsed(true);
+    const newMappings: Record<number, string> = {};
+    for (let cIdx = 0; cIdx < detectedColCount; cIdx++) {
+      const headerTitle = firstRow[cIdx] || '';
+      const sampleValues = parsedMatrix.slice(looksLikeHeader ? 1 : 0, 4).map((r) => r[cIdx] || '');
+      const guessed = guessColumnMapping(headerTitle, sampleValues, targets);
+
+      if (guessed) {
+        newMappings[cIdx] = guessed;
+      } else if (PROJECT_COLUMNS[cIdx]) {
+        newMappings[cIdx] = PROJECT_COLUMNS[cIdx].key as string;
+      } else {
+        newMappings[cIdx] = 'SKIP';
+      }
+    }
+
+    setColumnMappings(newMappings);
+  }, [parsedMatrix, detectedColCount]);
+
+  // File Upload Handler
+  const handleFileSelected = async (file: File) => {
+    setParseError(null);
+    setUploadedFile(file);
+    setIsParsing(true);
+
+    try {
+      const matrix = await parseExcelFile(file);
+      if (matrix.length === 0) {
+        setParseError('The uploaded file appears to be empty.');
+        setParsedMatrix([]);
+      } else {
+        setParsedMatrix(matrix);
+      }
+    } catch (err: any) {
+      console.error('Error parsing Excel file:', err);
+      setParseError(err.message || 'Failed to read file. Please ensure it is a valid .xlsx, .xls, or .csv file.');
+      setParsedMatrix([]);
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = PROJECT_COLUMNS.map((c) => c.name);
+    const sample = [
+      [
+        'Saeed Al-Ghamdi',
+        '+971 50 123 4567',
+        'Skyline Horizon',
+        'Emaar Properties',
+        'Dubai Marina',
+        '2BR High Floor',
+        'Apartment',
+        '4500000',
+        'Q4 2026',
+        'Interested in high floor sea view',
+      ],
+      [
+        'Maria Gonzalez',
+        '+971 55 987 6543',
+        'Parkside Views',
+        'Sobha Realty',
+        'MBR City',
+        '3BR Villa',
+        'Villa',
+        '8200000',
+        'Q2 2027',
+        'Requested payment plan breakdown',
+      ],
+    ];
+    downloadExcelTemplate('Dubai_Project_Leads_Template.xlsx', headers, sample);
   };
 
   const handleApplyImport = () => {
-    if (parsedRows.length === 0) return;
-    if (targetSheet === 'project') {
-      onImportProjects(parsedRows);
-    } else {
-      onImportSecondary(parsedRows);
+    if (parsedMatrix.length === 0) return;
+
+    const startRow = hasHeaderRow ? 1 : 0;
+    const results: Partial<ProjectLead>[] = [];
+
+    for (let r = startRow; r < parsedMatrix.length; r++) {
+      const cells = parsedMatrix[r];
+      if (!cells || cells.every((c) => !c.trim())) continue;
+
+      const lead: Partial<ProjectLead> = {
+        projectName: 'Off-Plan Project',
+        developer: 'Emaar Properties',
+        community: 'Dubai',
+        unitDetails: '',
+        propertyType: 'Apartment',
+        handoverDetails: 'Q4 2026',
+        visitedDate: getTodayDateString(),
+        ownerName: 'New Lead',
+        contactNo: '',
+        callStatus: 'New',
+        followUpDate: '',
+        followUpTime: '10:00',
+        budgetAED: 0,
+        notes: '',
+      };
+
+      Object.entries(columnMappings).forEach(([colIdxStr, targetKey]: [string, string]) => {
+        const colIdx = Number(colIdxStr);
+        if (targetKey === 'SKIP') return;
+
+        const val = cells[colIdx] !== undefined ? cells[colIdx].trim() : '';
+        if (targetKey === 'budgetAED') {
+          const num = parseFloat(val.replace(/[^0-9.-]/g, ''));
+          lead.budgetAED = isNaN(num) ? 0 : num;
+        } else if (targetKey === 'propertyType') {
+          lead.propertyType = (val as any) || 'Apartment';
+        } else {
+          (lead as Record<string, any>)[targetKey] = val;
+        }
+      });
+
+      results.push(lead);
     }
-    setRawText('');
-    setParsedRows([]);
-    setHasParsed(false);
-    onClose();
+
+    if (results.length > 0) {
+      onImportProjects(results);
+      onClose();
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: `Successfully imported ${results.length} project leads from Excel!` },
+        })
+      );
+    }
   };
 
   const loadSampleData = () => {
-    let sample = '';
-    if (targetSheet === 'project') {
-      sample = `Skyline Horizon\tEmaar Properties\tDubai Marina\t2BR High Floor\tApartment\tQ4 2026\t2026-08-20\tSaeed Al-Ghamdi\t+971 50 123 4567
-Parkside Views\tSobha Realty\tMBR City\t3BR Villa\tVilla\tQ2 2027\t2026-08-21\tMaria Gonzalez\t+971 55 987 6543
-Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 2027\t2026-08-22\tLeonid V\t+971 52 444 3322`;
-    } else {
-      sample = `Mansoor Rashid\t+971 50 888 1122\tDubai Hills Estate Villa\tBuyer\t2026-08-22\t7500000\tLooking for 4BR single row with garden
-Fatima Al-Zahra\t+971 55 222 3344\tPalm Views East 1BR\tSeller\t2026-08-21\t1850000\tRented unit, wants immediate investor cash buyer`;
-    }
+    const sample = `Skyline Horizon\tEmaar Properties\tDubai Marina\t2BR High Floor\tApartment\tQ4 2026\t2026-09-24\tSaeed Al-Ghamdi\t+971 50 123 4567\t4500000\tInterested in sea view
+Parkside Views\tSobha Realty\tMBR City\t3BR Villa\tVilla\tQ2 2027\t2026-09-24\tMaria Gonzalez\t+971 55 987 6543\t8200000\tRequested payment plan
+Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 2027\t2026-09-24\tLeonid Volkov\t+971 52 444 3322\t2100000\tImmediate cash buyer`;
     setRawText(sample);
-    handleParse(sample);
   };
 
+  if (!isOpen) return null;
+
+  const validRowCount = parsedMatrix.length > 0 ? (hasHeaderRow ? Math.max(0, parsedMatrix.length - 1) : parsedMatrix.length) : 0;
+
   return (
-    <div className="fixed inset-0 z-50 bg-[#0B1B32]/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-3xl rounded-lg shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
-        
+    <div className="fixed inset-0 z-50 bg-[#0B1B32]/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+      <div 
+        className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="bg-[#0B1B32] text-white px-6 py-4 flex items-center justify-between border-b border-[#D4AF37]">
+        <div className="bg-[#0B1B32] text-white px-6 py-4 flex items-center justify-between border-b border-[#D4AF37]/50">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-[#D4AF37] text-[#0B1B32] flex items-center justify-center font-bold">
-              <ClipboardPaste className="w-4 h-4" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#D4AF37] to-[#AA8010] text-[#0B1B32] flex items-center justify-center font-bold shadow-md">
+              <FileSpreadsheet className="w-5 h-5 text-[#0B1B32]" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white font-display">
-                Bulk Import / Paste from Excel
-              </h3>
-              <p className="text-xs text-slate-300">
-                Target Sheet:{' '}
-                <span className="text-[#D4AF37] font-semibold">
-                  {targetSheet === 'project' ? 'Project & Off-Plan Leads' : 'Buyers & Sellers'}
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-lg text-white font-display">
+                  Bulk Import from Excel
+                </h3>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                  .xlsx · .xls · .csv
                 </span>
+              </div>
+              <p className="text-xs text-slate-300">
+                Target: <span className="text-[#D4AF37] font-semibold">Project & Off-Plan Leads</span>
               </p>
             </div>
           </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownloadTemplate}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-all cursor-pointer"
+              title="Download Excel Starter Template"
+            >
+              <Download className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span>Download Excel Template</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Tab Selector */}
+        <div className="bg-slate-100 px-6 pt-3 border-b border-slate-200 flex items-center justify-between">
+          <div className="flex space-x-2">
+            <button
+              type="button"
+              onClick={() => setActiveMode('upload')}
+              className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-2 cursor-pointer border-t border-x ${
+                activeMode === 'upload'
+                  ? 'bg-white text-[#0B1B32] border-slate-200 -mb-px'
+                  : 'bg-transparent text-slate-600 hover:text-slate-900 border-transparent'
+              }`}
+            >
+              <UploadCloud className="w-4 h-4 text-[#D4AF37]" />
+              <span>📁 Upload Excel File (.xlsx / .csv)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('paste')}
+              className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-2 cursor-pointer border-t border-x ${
+                activeMode === 'paste'
+                  ? 'bg-white text-[#0B1B32] border-slate-200 -mb-px'
+                  : 'bg-transparent text-slate-600 hover:text-slate-900 border-transparent'
+              }`}
+            >
+              <ClipboardPaste className="w-4 h-4 text-blue-600" />
+              <span>📋 Paste Copied Cells</span>
+            </button>
+          </div>
+
           <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded transition-colors"
+            onClick={handleDownloadTemplate}
+            className="sm:hidden text-xs text-[#0B1B32] font-semibold flex items-center gap-1 underline mb-2"
           >
-            <X className="w-5 h-5" />
+            <Download className="w-3 h-3" /> Template
           </button>
         </div>
 
-        {/* Content Body */}
+        {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-4 text-xs text-slate-700 flex-1">
-          
-          <div className="bg-slate-50 border border-slate-200 rounded p-3 flex items-start gap-2.5">
-            <HelpCircle className="w-4 h-4 text-[#D4AF37] shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-semibold text-[#0B1B32]">How Excel Copy-Paste works:</p>
-              <p className="text-slate-600">
-                Select rows in Excel or Google Sheets, press <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded font-mono text-[10px]">Ctrl+C</kbd> / <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded font-mono text-[10px]">Cmd+C</kbd>, and paste here with <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded font-mono text-[10px]">Ctrl+V</kbd>. Raw leads with just (Name, Number, Property) will be automatically formatted with blank Call Status and Follow-up Dates ready for your daily call schedule.
-              </p>
-            </div>
-          </div>
+          {/* Mode 1: File Drag & Drop */}
+          {activeMode === 'upload' && (
+            <div className="space-y-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx, .xls, .csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleFileSelected(e.target.files[0]);
+                  }
+                }}
+              />
 
-          {/* Text Area */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="font-bold uppercase tracking-wider text-[11px] text-slate-600">
-                Paste Raw Tab-Separated Rows / CSV Below:
-              </label>
-              <button
-                type="button"
-                onClick={loadSampleData}
-                className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer underline flex items-center gap-1"
-              >
-                <Sparkles className="w-3 h-3" />
-                Load Sample Excel Rows
-              </button>
-            </div>
-            
-            <textarea
-              rows={6}
-              value={rawText}
-              onChange={(e) => {
-                setRawText(e.target.value);
-                handleParse(e.target.value);
-              }}
-              placeholder={
-                targetSheet === 'project'
-                  ? 'Project Name\tDeveloper\tCommunity\tUnit Details\tType\tHandover\tVisited Date\tOwner Name\tContact No\nBurj Crown\tEmaar\tDowntown\t2BR\tApartment\tQ4 2026\t2026-08-22\tTariq\t+971501234567'
-                  : 'Client Name\tMobile\tProperty\tBuyer/Seller\tDate\tBudget\tExpectation\nKarim Boulos\t+971559018844\tSidra Villa\tSeller\t2026-08-22\t6800000\tPlot 5100 sqft'
-              }
-              className="w-full font-mono text-xs p-3 bg-[#F8FAFC] border border-slate-300 rounded-md focus:outline-none focus:border-[#D4AF37] focus:bg-white resize-y"
-            />
-          </div>
+              {!uploadedFile ? (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${
+                    isDragOver
+                      ? 'border-[#D4AF37] bg-amber-50/60 scale-[0.99]'
+                      : 'border-slate-300 hover:border-[#0B1B32] bg-slate-50/70 hover:bg-white'
+                  }`}
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center text-[#0B1B32] shadow-xs">
+                    <UploadCloud className="w-7 h-7 text-[#D4AF37]" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-[#0B1B32]">
+                      Click to choose an Excel file or drag & drop here
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Supports Microsoft Excel (<strong className="text-slate-700">.xlsx, .xls</strong>) and CSV (<strong className="text-slate-700">.csv</strong>)
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0B1B32] text-white text-xs font-bold mt-1 shadow-xs hover:bg-[#152945]">
+                    Browse Computer
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold">
+                      <FileSpreadsheet className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm">{uploadedFile.name}</h4>
+                      <p className="text-xs text-slate-500">
+                        {(uploadedFile.size / 1024).toFixed(1)} KB · {parsedMatrix.length} rows read
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadedFile(null);
+                      setParsedMatrix([]);
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer"
+                  >
+                    Change File
+                  </button>
+                </div>
+              )}
 
-          {/* Parsed Preview Table */}
-          {hasParsed && (
-            <div className="space-y-2 pt-2 border-t border-slate-200">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-[#0B1B32] text-xs flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Ready to Insert ({parsedRows.length} Rows Detected)
+              {isParsing && (
+                <div className="text-center py-4 text-xs font-semibold text-slate-500 flex items-center justify-center gap-2">
+                  <span className="w-3.5 h-3.5 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin" />
+                  <span>Reading and analyzing Excel spreadsheet...</span>
+                </div>
+              )}
+
+              {parseError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                  <span>{parseError}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mode 2: Copy-Paste */}
+          {activeMode === 'paste' && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-bold uppercase tracking-wider text-[11px] text-slate-600">
+                  Paste Raw Cells from Excel / Sheets:
+                </label>
+                <button
+                  type="button"
+                  onClick={loadSampleData}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer underline flex items-center gap-1"
+                >
+                  <Sparkles className="w-3 h-3 text-[#D4AF37]" />
+                  Auto-Fill Sample Excel Rows
+                </button>
+              </div>
+              
+              <textarea
+                rows={5}
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
+                placeholder="Paste copied Excel cells here directly (Ctrl+V)..."
+                className="w-full font-mono text-xs p-3 bg-[#F8FAFC] border border-slate-300 rounded-lg focus:outline-none focus:border-[#D4AF37] focus:bg-white resize-y"
+              />
+            </div>
+          )}
+
+          {/* Column Mapping Section (Only appears when data is loaded) */}
+          {parsedMatrix.length > 0 && (
+            <div className="space-y-3 pt-3 border-t border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                <span className="text-xs text-slate-700 font-semibold">
+                  Detected <strong>{parsedMatrix.length}</strong> rows and <strong>{detectedColCount}</strong> columns
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  Call Status & Follow-up Dates will be left open for inline editing
-                </span>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hasHeaderRow}
+                    onChange={(e) => setHasHeaderRow(e.target.checked)}
+                    className="rounded text-[#0B1B32] focus:ring-0"
+                  />
+                  <span>First row contains headers (do not insert as lead)</span>
+                </label>
               </div>
 
-              <div className="max-h-48 overflow-y-auto border border-slate-200 rounded bg-white">
-                <table className="w-full text-left text-[11px] border-collapse">
-                  <thead className="bg-slate-100 text-slate-600 font-bold sticky top-0">
-                    <tr>
-                      <th className="py-2 px-2.5 border-b border-slate-200">#</th>
-                      <th className="py-2 px-2.5 border-b border-slate-200">Name / Owner</th>
-                      <th className="py-2 px-2.5 border-b border-slate-200">Contact No.</th>
-                      <th className="py-2 px-2.5 border-b border-slate-200">
-                        {targetSheet === 'project' ? 'Project / Developer' : 'Property / Budget'}
-                      </th>
-                      <th className="py-2 px-2.5 border-b border-slate-200">Details / Requirements</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {parsedRows.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="py-1.5 px-2.5 text-slate-400 font-mono">{idx + 1}</td>
-                        <td className="py-1.5 px-2.5 font-bold text-slate-800">
-                          {targetSheet === 'project' ? row.ownerName : row.name}
-                        </td>
-                        <td className="py-1.5 px-2.5 font-mono text-slate-600">
-                          {targetSheet === 'project' ? row.contactNo : row.mobile}
-                        </td>
-                        <td className="py-1.5 px-2.5 text-slate-700">
-                          {targetSheet === 'project' 
-                            ? `${row.projectName} (${row.developer})` 
-                            : `${row.property} (AED ${row.budget?.toLocaleString()})`}
-                        </td>
-                        <td className="py-1.5 px-2.5 text-slate-500 max-w-xs truncate">
-                          {targetSheet === 'project' ? row.unitDetails : row.expectationRequirements}
-                        </td>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Map Excel Columns to CRM Lead Fields:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {Array.from({ length: detectedColCount }).map((_, cIdx) => {
+                    const firstVal = parsedMatrix[0]?.[cIdx] || `Col ${cIdx + 1}`;
+                    const currentTarget = columnMappings[cIdx] || 'SKIP';
+
+                    return (
+                      <div
+                        key={cIdx}
+                        className="p-2 rounded-lg bg-slate-50 border border-slate-200 space-y-1 text-xs"
+                      >
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span className="font-mono font-bold text-slate-700">
+                            Excel Column {cIdx + 1}
+                          </span>
+                          <span className="truncate max-w-[120px] italic text-slate-400" title={firstVal}>
+                            "{firstVal}"
+                          </span>
+                        </div>
+
+                        <select
+                          value={currentTarget}
+                          onChange={(e) =>
+                            setColumnMappings((prev) => ({
+                              ...prev,
+                              [cIdx]: e.target.value,
+                            }))
+                          }
+                          className={`w-full px-2 py-1.5 text-xs rounded-md border font-semibold ${
+                            currentTarget === 'SKIP'
+                              ? 'bg-slate-100 text-slate-400 border-slate-200'
+                              : 'bg-white text-[#0B1B32] border-[#0B1B32]'
+                          }`}
+                        >
+                          <option value="SKIP">❌ Skip / Do Not Import</option>
+                          {PROJECT_COLUMNS.map((col) => (
+                            <option key={col.key as string} value={col.key as string}>
+                              ➔ {col.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Live Preview Table */}
+              <div>
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Live Preview (First 3 Rows):
+                </p>
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-40">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-[#0B1B32] text-white">
+                      <tr>
+                        <th className="p-2 w-8 text-center font-mono">#</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Client / Owner</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Contact No.</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Project</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Developer</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Unit</th>
+                        <th className="p-2 font-bold whitespace-nowrap">Budget AED</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {parsedMatrix.slice(hasHeaderRow ? 1 : 0, (hasHeaderRow ? 1 : 0) + 3).map((r, rIdx) => {
+                        const getVal = (key: string) => {
+                          const cIdx = Object.keys(columnMappings).find((k) => columnMappings[Number(k)] === key);
+                          return cIdx !== undefined ? r[Number(cIdx)] : '';
+                        };
+
+                        return (
+                          <tr key={rIdx} className="hover:bg-slate-50">
+                            <td className="p-2 text-center text-slate-400 font-mono text-[10px] bg-slate-50">
+                              {rIdx + 1}
+                            </td>
+                            <td className="p-2 font-bold text-slate-800 whitespace-nowrap">
+                              {getVal('ownerName') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                            <td className="p-2 font-mono text-slate-600 whitespace-nowrap">
+                              {getVal('contactNo') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                            <td className="p-2 text-slate-700 whitespace-nowrap">
+                              {getVal('projectName') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                            <td className="p-2 text-slate-700 whitespace-nowrap">
+                              {getVal('developer') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                            <td className="p-2 text-slate-700 whitespace-nowrap">
+                              {getVal('unitDetails') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                            <td className="p-2 text-slate-700 font-mono whitespace-nowrap">
+                              {getVal('budgetAED') || <span className="text-slate-300 italic">empty</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -269,11 +575,11 @@ Fatima Al-Zahra\t+971 55 222 3344\tPalm Views East 1BR\tSeller\t2026-08-21\t1850
         </div>
 
         {/* Footer Controls */}
-        <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-between">
+        <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex items-center justify-between">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded text-slate-600 hover:text-slate-800 text-xs font-semibold"
+            className="px-4 py-2 rounded-lg text-slate-600 hover:text-slate-800 text-xs font-semibold cursor-pointer"
           >
             Cancel
           </button>
@@ -281,15 +587,15 @@ Fatima Al-Zahra\t+971 55 222 3344\tPalm Views East 1BR\tSeller\t2026-08-21\t1850
           <button
             type="button"
             onClick={handleApplyImport}
-            disabled={parsedRows.length === 0}
-            className={`px-5 py-2 rounded text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
-              parsedRows.length > 0
-                ? 'bg-[#0B1B32] hover:bg-[#152945] text-white'
+            disabled={validRowCount === 0}
+            className={`px-6 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shadow-md cursor-pointer ${
+              validRowCount > 0
+                ? 'bg-[#0B1B32] hover:bg-[#152945] text-white hover:shadow-lg'
                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
             }`}
           >
-            <span>Insert {parsedRows.length} Rows into Spreadsheet</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <CheckCircle2 className="w-4 h-4 text-[#D4AF37]" />
+            <span>Import {validRowCount} Leads from Excel</span>
           </button>
         </div>
 

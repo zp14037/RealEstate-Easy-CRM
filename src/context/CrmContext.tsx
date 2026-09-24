@@ -5,7 +5,10 @@ import {
   ActiveTab, 
   ActionItem, 
   CallStatus, 
-  SecondaryStatus 
+  SecondaryStatus,
+  CustomTable,
+  CustomTableRow,
+  CustomTableColumn
 } from '../types';
 import { 
   formatAED, 
@@ -23,7 +26,15 @@ import {
   deleteProjectLeadFromDb, 
   deleteSecondaryLeadFromDb, 
   bulkInsertProjectLeadsToDb, 
-  bulkInsertSecondaryLeadsToDb 
+  bulkInsertSecondaryLeadsToDb,
+  fetchCustomTablesFromDb,
+  saveCustomTableToDb,
+  deleteCustomTableFromDb,
+  fetchCustomTableRowsFromDb,
+  insertCustomTableRowToDb,
+  updateCustomTableRowInDb,
+  deleteCustomTableRowFromDb,
+  bulkInsertCustomTableRowsToDb
 } from '../services/supabaseDataService';
 import { isSupabaseConfigured, getSupabaseClient } from '../lib/supabaseClient';
 
@@ -32,6 +43,8 @@ interface CrmContextType {
   setActiveTab: (tab: ActiveTab) => void;
   projectLeads: ProjectLead[];
   secondaryLeads: SecondaryLead[];
+  customTables: CustomTable[];
+  customRows: CustomTableRow[];
   actionItems: ActionItem[];
   overdueCount: number;
   dueTodayCount: number;
@@ -42,6 +55,17 @@ interface CrmContextType {
   isDbConnected: boolean;
   refreshFromDb: () => Promise<void>;
   
+  // Custom Dynamic Tables CRUD
+  addCustomTable: (table: Omit<CustomTable, 'id' | 'createdAt' | 'updatedAt'>) => string;
+  deleteCustomTable: (tableId: string) => void;
+  addCustomTableRow: (tableId: string, data: Record<string, any>, insertAt?: 'top' | 'bottom') => string;
+  updateCustomTableRow: (rowId: string, dataUpdates: Record<string, any>) => void;
+  deleteCustomTableRow: (rowId: string) => void;
+  duplicateCustomTableRow: (rowId: string) => void;
+  bulkAddCustomTableRows: (tableId: string, rowsData: Record<string, any>[]) => number;
+  clearCustomTableRows: (tableId: string) => void;
+  clearProjectLeads: () => void;
+
   // Row Mutations (Zero-Modal Spreadsheet Paradigm)
   updateProjectLead: (id: string, updates: Partial<ProjectLead>) => void;
   updateSecondaryLead: (id: string, updates: Partial<SecondaryLead>) => void;
@@ -69,6 +93,8 @@ interface CrmContextType {
 
 const STORAGE_KEY_PROJECTS = 'xpotential_crm_project_leads_v2';
 const STORAGE_KEY_SECONDARY = 'xpotential_crm_secondary_leads_v2';
+const STORAGE_KEY_CUSTOM_TABLES = 'xpotential_crm_custom_tables_v1';
+const STORAGE_KEY_CUSTOM_ROWS = 'xpotential_crm_custom_rows_v1';
 
 const CrmContext = createContext<CrmContextType | undefined>(undefined);
 
@@ -79,7 +105,42 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Real Database state: starts empty, no sample data needed!
   const [projectLeads, setProjectLeads] = useState<ProjectLead[]>([]);
   const [secondaryLeads, setSecondaryLeads] = useState<SecondaryLead[]>([]);
+  const [customTables, setCustomTables] = useState<CustomTable[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_TABLES);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [customRows, setCustomRows] = useState<CustomTableRow[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_ROWS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [isDbConnected, setIsDbConnected] = useState<boolean>(() => isSupabaseConfigured());
+
+  // Save to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_TABLES, JSON.stringify(customTables));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [customTables]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_ROWS, JSON.stringify(customRows));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [customRows]);
 
   // Function to refresh leads directly from Supabase
   const refreshFromDb = async () => {
@@ -89,12 +150,24 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setIsDbConnected(true);
     try {
-      const [proj, sec] = await Promise.all([
+      const [proj, sec, dbTables] = await Promise.all([
         fetchProjectLeadsFromDb(),
         fetchSecondaryLeadsFromDb(),
+        fetchCustomTablesFromDb(),
       ]);
       setProjectLeads(proj);
       setSecondaryLeads(sec);
+
+      if (dbTables && dbTables.length > 0) {
+        setCustomTables(dbTables);
+        const rowsArrays = await Promise.all(
+          dbTables.map((t: any) => fetchCustomTableRowsFromDb(t.id))
+        );
+        const flatRows = rowsArrays.flat();
+        if (flatRows.length > 0) {
+          setCustomRows(flatRows);
+        }
+      }
     } catch (e) {
       console.error('Failed to load leads from Supabase:', e);
     }
@@ -125,12 +198,117 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'secondary_leads' }, () => {
         fetchSecondaryLeadsFromDb().then((leads) => setSecondaryLeads(leads));
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_tables' }, () => {
+        fetchCustomTablesFromDb().then((tables) => {
+          if (tables && tables.length > 0) setCustomTables(tables);
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_table_rows' }, () => {
+        // Refresh custom table rows
+        if (customTables.length > 0) {
+          Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id))).then((arrays) => {
+            setCustomRows(arrays.flat());
+          });
+        }
+      })
       .subscribe();
 
     return () => {
       client.removeChannel(channel);
     };
-  }, [isDbConnected]);
+  }, [isDbConnected, customTables]);
+
+  // ==========================================================================
+  // Dynamic Custom Tables CRUD
+  // ==========================================================================
+
+  const addCustomTable = (tableData: Omit<CustomTable, 'id' | 'createdAt' | 'updatedAt'>): string => {
+    const newId = `table_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const newTable: CustomTable = {
+      ...tableData,
+      id: newId,
+      createdAt: getTodayDateString(),
+      updatedAt: getTodayDateString(),
+    };
+    setCustomTables((prev) => [...prev, newTable]);
+    saveCustomTableToDb(newTable);
+    setActiveTab(newId);
+    return newId;
+  };
+
+  const deleteCustomTable = (tableId: string) => {
+    setCustomTables((prev) => prev.filter((t) => t.id !== tableId));
+    setCustomRows((prev) => prev.filter((r) => r.tableId !== tableId));
+    deleteCustomTableFromDb(tableId);
+    if (activeTab === tableId) {
+      setActiveTab('project_leads');
+    }
+  };
+
+  const addCustomTableRow = (tableId: string, data: Record<string, any>, insertAt: 'top' | 'bottom' = 'top'): string => {
+    const newId = `row_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const newRow: CustomTableRow = {
+      id: newId,
+      tableId,
+      data,
+      createdAt: getTodayDateString(),
+      updatedAt: getTodayDateString(),
+    };
+    setCustomRows((prev) => (insertAt === 'top' ? [newRow, ...prev] : [...prev, newRow]));
+    insertCustomTableRowToDb(newRow);
+    return newId;
+  };
+
+  const updateCustomTableRow = (rowId: string, dataUpdates: Record<string, any>) => {
+    let updatedRowData: Record<string, any> = {};
+    setCustomRows((prev) =>
+      prev.map((r) => {
+        if (r.id === rowId) {
+          updatedRowData = { ...r.data, ...dataUpdates };
+          return {
+            ...r,
+            data: updatedRowData,
+            updatedAt: getTodayDateString(),
+          };
+        }
+        return r;
+      })
+    );
+    updateCustomTableRowInDb(rowId, updatedRowData);
+  };
+
+  const deleteCustomTableRow = (rowId: string) => {
+    setCustomRows((prev) => prev.filter((r) => r.id !== rowId));
+    deleteCustomTableRowFromDb(rowId);
+  };
+
+  const duplicateCustomTableRow = (rowId: string) => {
+    const existing = customRows.find((r) => r.id === rowId);
+    if (!existing) return;
+    const newId = `row_dup_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const newRow: CustomTableRow = {
+      ...existing,
+      id: newId,
+      createdAt: getTodayDateString(),
+      updatedAt: getTodayDateString(),
+    };
+    setCustomRows((prev) => [newRow, ...prev]);
+    insertCustomTableRowToDb(newRow);
+  };
+
+  const bulkAddCustomTableRows = (tableId: string, rowsData: Record<string, any>[]): number => {
+    if (!rowsData || rowsData.length === 0) return 0;
+    const formatted: CustomTableRow[] = rowsData.map((data, idx) => ({
+      id: `row_bulk_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+      tableId,
+      data,
+      createdAt: getTodayDateString(),
+      updatedAt: getTodayDateString(),
+    }));
+    setCustomRows((prev) => [...formatted, ...prev]);
+    bulkInsertCustomTableRowsToDb(formatted);
+    return formatted.length;
+  };
 
   // Lead update helpers (Optimistic + Supabase DB)
   const updateProjectLead = (id: string, updates: Partial<ProjectLead>) => {
@@ -383,6 +561,27 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const clearProjectLeads = () => {
+    setProjectLeads([]);
+    try {
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify([]));
+    } catch (e) {
+      console.error(e);
+    }
+    const client = getSupabaseClient();
+    if (client) {
+      client.from('project_leads').delete().neq('id', '___non_existent___').then();
+    }
+  };
+
+  const clearCustomTableRows = (tableId: string) => {
+    setCustomRows((prev) => prev.filter((r) => r.tableId !== tableId));
+    const client = getSupabaseClient();
+    if (client) {
+      client.from('custom_table_rows').delete().eq('tableId', tableId).then();
+    }
+  };
+
   const clearAllData = () => {
     setProjectLeads([]);
     setSecondaryLeads([]);
@@ -589,6 +788,8 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         projectLeads,
         secondaryLeads,
+        customTables,
+        customRows,
         actionItems,
         overdueCount,
         dueTodayCount,
@@ -596,6 +797,17 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalActiveCount,
         searchQuery,
         setSearchQuery,
+        isDbConnected,
+        refreshFromDb,
+        addCustomTable,
+        deleteCustomTable,
+        addCustomTableRow,
+        updateCustomTableRow,
+        deleteCustomTableRow,
+        duplicateCustomTableRow,
+        bulkAddCustomTableRows,
+        clearCustomTableRows,
+        clearProjectLeads,
         updateProjectLead,
         updateSecondaryLead,
         addBlankProjectLead,

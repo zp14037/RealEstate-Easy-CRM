@@ -20,6 +20,7 @@ import { useCrm } from '../context/CrmContext';
 import { ActiveTab } from '../types';
 import { ExcelPasteDrawer } from './ExcelPasteDrawer';
 import { GoogleAuthButton } from './GoogleAuthButton';
+import { AddTableModal } from './AddTableModal';
 
 export const HeaderNav: React.FC = () => {
   const { 
@@ -29,11 +30,9 @@ export const HeaderNav: React.FC = () => {
     overdueCount, 
     dueTodayCount, 
     projectLeads, 
-    secondaryLeads, 
-    addBlankProjectLead,
-    addBlankSecondaryLead,
+    customTables,
+    addCustomTable,
     bulkAddProjectLeads,
-    bulkAddSecondaryLeads,
     exportToCsv,
     searchQuery,
     setSearchQuery
@@ -41,6 +40,7 @@ export const HeaderNav: React.FC = () => {
 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isBulkPasteOpen, setIsBulkPasteOpen] = useState(false);
+  const [isAddTableOpen, setIsAddTableOpen] = useState(false);
 
   // Today's formatted date
   const todayFormatted = new Intl.DateTimeFormat('en-GB', {
@@ -57,20 +57,10 @@ export const HeaderNav: React.FC = () => {
         return "Today's Action Feed";
       case 'project_leads':
         return 'Project & Off-Plan Leads (Spreadsheet)';
-      case 'secondary_leads':
-        return 'Buyers & Sellers (Spreadsheet)';
-      default:
-        return 'Overview';
-    }
-  };
-
-  // Instant Add Blank Row handler without any popups
-  const handleDirectAddRow = () => {
-    if (activeTab === 'secondary_leads') {
-      addBlankSecondaryLead('top');
-    } else {
-      setActiveTab('project_leads');
-      addBlankProjectLead('top');
+      default: {
+        const found = customTables.find((t) => t.id === activeTab);
+        return found ? `${found.name} (Spreadsheet)` : 'Custom Spreadsheet';
+      }
     }
   };
 
@@ -118,14 +108,14 @@ export const HeaderNav: React.FC = () => {
         {/* Google OAuth 2.0 Sign-In / Calendar Sync Status */}
         <GoogleAuthButton />
 
-        {/* Bulk Paste from Excel Button */}
+        {/* Bulk Import from Excel Button */}
         <button
           onClick={() => setIsBulkPasteOpen(true)}
           className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-          title="Bulk paste copied rows from Excel"
+          title="Import leads from Excel spreadsheet (.xlsx, .xls, .csv)"
         >
-          <ClipboardPaste className="w-3.5 h-3.5 text-[#0B1B32]" />
-          <span>Paste from Excel</span>
+          <FileSpreadsheet className="w-3.5 h-3.5 text-[#0B1B32]" />
+          <span>Bulk Import from Excel</span>
         </button>
 
         {/* Export Menu */}
@@ -165,29 +155,19 @@ export const HeaderNav: React.FC = () => {
                 <Layers className="w-3.5 h-3.5 text-blue-600" />
                 Export Project Leads CSV
               </button>
-              <button
-                onClick={() => {
-                  exportToCsv('secondary');
-                  setShowExportMenu(false);
-                }}
-                className="w-full text-left px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-              >
-                <Users className="w-3.5 h-3.5 text-purple-600" />
-                Export Buyers/Sellers CSV
-              </button>
             </div>
           )}
         </div>
 
-        {/* Direct Instant "+ Add Blank Row" (No Modal) */}
+        {/* "+ Add Table" Button */}
         <button
-          id="global-add-row-btn"
-          onClick={handleDirectAddRow}
-          className="bg-[#0B1B32] text-white px-3 sm:px-4 py-2 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 hover:bg-[#152945] transition-colors shadow-xs cursor-pointer"
-          title="Appends an editable blank row directly into the spreadsheet"
+          id="global-add-table-btn"
+          onClick={() => setIsAddTableOpen(true)}
+          className="bg-[#0B1B32] text-white px-3 sm:px-4 py-2 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 hover:bg-[#152945] transition-colors shadow-xs cursor-pointer border border-[#D4AF37]/40"
+          title="Create a new custom table with defined columns"
         >
-          <Plus className="w-4 h-4 stroke-[3]" />
-          <span>+ Add Blank Row</span>
+          <Plus className="w-4 h-4 stroke-[3] text-[#D4AF37]" />
+          <span>+ Add Table</span>
         </button>
 
       </div>
@@ -196,9 +176,16 @@ export const HeaderNav: React.FC = () => {
       <ExcelPasteDrawer
         isOpen={isBulkPasteOpen}
         onClose={() => setIsBulkPasteOpen(false)}
-        targetSheet={activeTab === 'secondary_leads' ? 'secondary' : 'project'}
+        targetSheet="project"
         onImportProjects={bulkAddProjectLeads}
-        onImportSecondary={bulkAddSecondaryLeads}
+        onImportSecondary={() => {}}
+      />
+
+      {/* Create Table Modal */}
+      <AddTableModal
+        isOpen={isAddTableOpen}
+        onClose={() => setIsAddTableOpen(false)}
+        onCreateTable={addCustomTable}
       />
 
     </header>

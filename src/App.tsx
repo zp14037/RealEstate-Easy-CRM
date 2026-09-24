@@ -3,7 +3,7 @@ import { CrmProvider, useCrm } from './context/CrmContext';
 import { HeaderNav } from './components/HeaderNav';
 import { DashboardView } from './components/DashboardView';
 import { ProjectLeadsView } from './components/ProjectLeadsView';
-import { SecondaryLeadsView } from './components/SecondaryLeadsView';
+import { CustomTableView } from './components/CustomTableView';
 import { 
   Building2, 
   Users, 
@@ -15,7 +15,10 @@ import {
   Zap, 
   RotateCcw,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Table as TableIcon,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { getDateOffset, getTodayDateString } from './data/mockData';
 
@@ -26,7 +29,9 @@ const CrmMainLayout: React.FC = () => {
     overdueCount, 
     dueTodayCount,
     projectLeads,
-    secondaryLeads,
+    customTables,
+    customRows,
+    deleteCustomTable,
     addBlankProjectLead,
     updateProjectLead,
   } = useCrm();
@@ -170,24 +175,53 @@ const CrmMainLayout: React.FC = () => {
               </span>
             </button>
 
-            {/* Menu Item 3: Buyers / Sellers (Spreadsheet) */}
-            <button
-              id="nav-tab-secondary"
-              onClick={() => { setActiveTab('secondary_leads'); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center justify-between px-4 py-3 transition-colors text-left cursor-pointer ${
-                activeTab === 'secondary_leads'
-                  ? 'bg-[#D4AF37]/15 border-l-4 border-[#D4AF37] text-white font-bold'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5 border-l-4 border-transparent'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Users className={`w-4 h-4 ${activeTab === 'secondary_leads' ? 'text-purple-400' : 'text-slate-500'}`} />
-                <span className="text-sm">Buyers & Sellers (9 Col)</span>
+            {/* Custom Dynamic Tables Section */}
+            {customTables.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-white/10">
+                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-4 mb-2">
+                  Custom Tables
+                </p>
+                {customTables.map((table) => {
+                  const isActive = activeTab === table.id;
+                  const rowCount = customRows.filter((r) => r.tableId === table.id).length;
+
+                  return (
+                    <div key={table.id} className="group relative flex items-center">
+                      <button
+                        onClick={() => { setActiveTab(table.id); setMobileMenuOpen(false); }}
+                        className={`w-full flex items-center justify-between px-4 py-2.5 transition-colors text-left cursor-pointer pr-8 ${
+                          isActive
+                            ? 'bg-[#D4AF37]/15 border-l-4 border-[#D4AF37] text-white font-bold'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5 border-l-4 border-transparent'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <TableIcon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#D4AF37]' : 'text-slate-500'}`} />
+                          <span className="text-sm truncate">{table.name}</span>
+                        </div>
+                        <span className="text-xs text-slate-400 bg-white/10 px-2 py-0.5 rounded font-mono shrink-0">
+                          {rowCount}
+                        </span>
+                      </button>
+
+                      {/* Quick Delete Table Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Delete table "${table.name}"?`)) {
+                            deleteCustomTable(table.id);
+                          }
+                        }}
+                        className="absolute right-2 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 p-1 rounded transition-opacity cursor-pointer"
+                        title="Delete table"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              <span className="text-xs text-slate-400 bg-white/10 px-2 py-0.5 rounded font-mono">
-                {secondaryLeads.length}
-              </span>
-            </button>
+            )}
           </div>
 
           {/* Quick Metrics in Sidebar */}
@@ -203,8 +237,8 @@ const CrmMainLayout: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">Total Leads</span>
-              <span className="font-bold text-white">{projectLeads.length + secondaryLeads.length}</span>
+              <span className="text-slate-400">Total Records</span>
+              <span className="font-bold text-white">{projectLeads.length + customRows.length}</span>
             </div>
           </div>
         </nav>
@@ -248,7 +282,9 @@ const CrmMainLayout: React.FC = () => {
           <div className="max-w-7xl mx-auto">
             {activeTab === 'dashboard' && <DashboardView />}
             {activeTab === 'project_leads' && <ProjectLeadsView />}
-            {activeTab === 'secondary_leads' && <SecondaryLeadsView />}
+            {customTables.find((t) => t.id === activeTab) && (
+              <CustomTableView table={customTables.find((t) => t.id === activeTab)!} />
+            )}
           </div>
         </main>
 
