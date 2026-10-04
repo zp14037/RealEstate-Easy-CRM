@@ -17,20 +17,16 @@ import {
   FileSpreadsheet,
   UploadCloud,
   AlertCircle,
-  CalendarPlus
+  CalendarPlus,
+  Filter
 } from 'lucide-react';
 import { CustomTable, CustomTableRow } from '../types';
 import { EditableCell } from './EditableCell';
 import { useCrm } from '../context/CrmContext';
 import { saveDirectlyToGoogleCalendar } from '../utils/calendar';
-import { getDateOffset } from '../data/mockData';
+import { getDateOffset, getTodayDateString } from '../data/mockData';
 
-import { 
-  parseSpreadsheetText, 
-  parseExcelFile, 
-  downloadExcelTemplate, 
-  guessColumnMapping 
-} from '../utils/spreadsheetParser';
+import { ExcelPasteDrawer } from './ExcelPasteDrawer';
 
 interface CustomTableViewProps {
   table: CustomTable;
@@ -49,24 +45,30 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     searchQuery: globalSearch
   } = useCrm();
 
-  const [localSearch, setLocalSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [activeSearch, setActiveSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [isPasteDrawerOpen, setIsPasteDrawerOpen] = useState(false);
-  const [activeImportMode, setActiveImportMode] = useState<'upload' | 'paste'>('upload');
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [isParsing, setIsParsing] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [pasteRawText, setPasteRawText] = useState('');
-  const [parsedMatrix, setParsedMatrix] = useState<string[][]>([]);
-  const [hasHeaderRow, setHasHeaderRow] = useState(true);
-  const [columnMappings, setColumnMappings] = useState<Record<number, string>>({});
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [syncingRowId, setSyncingRowId] = useState<string | null>(null);
+  const latestDateMapRef = useRef<Record<string, string>>({});
 
   // Quick Preset Helper for Date column
+  // CUMULATIVE: Every click on +1d, +3d, +1w, +4m adds to the current date no matter how many times clicked!
   const handleQuickPresetDate = (rowId: string, colKey: string, days: number, months: number) => {
-    const nextDate = getDateOffset(days, months);
+    const mapKey = `${rowId}_${colKey}`;
+
+    if (days === 0 && months === 0) {
+      const today = getTodayDateString();
+      latestDateMapRef.current[mapKey] = today;
+      handleCellChange(rowId, colKey, today);
+      return;
+    }
+
+    const row = customRows.find((r) => r.id === rowId);
+    const existingVal = latestDateMapRef.current[mapKey] ?? (row?.data[colKey] ? String(row.data[colKey]).trim() : '');
+    const nextDate = getDateOffset(days, months, existingVal || undefined);
+    latestDateMapRef.current[mapKey] = nextDate;
     handleCellChange(rowId, colKey, nextDate);
   };
 
@@ -99,6 +101,8 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     );
     const telVal = telCol ? row.data[telCol.key] : '';
 
+    const timeVal = dateCol ? (row.data[`${dateCol.key}_time`] || '10:00') : '10:00';
+
     setSyncingRowId(row.id);
     const result = await saveDirectlyToGoogleCalendar(
       {
@@ -106,6 +110,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
         contactNo: String(telVal || ''),
         projectName: table.name,
         followUpDate: String(dateVal),
+        followUpTime: String(timeVal),
         notes: `Follow-up reminder from custom table: ${table.name}`,
       },
       'project'
@@ -119,25 +124,74 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     );
   };
 
-  // Get rows belonging to this table
+  // Get rows belonging to this table (permanently excluding any marked Not Interested)
   const tableRows = useMemo(() => {
-    return customRows.filter((r) => r.tableId === table.id);
-  }, [customRows, table.id]);
+    return customRows.filter((r) => {
+      if (r.tableId !== table.id) return false;
+      const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      if (statusCol && r.data[statusCol.key] === 'Not Interested') {
+        return false;
+      }
+      return true;
+    });
+  }, [customRows, table.id, table.columns]);
 
-  // Filtered rows by search query
+  const handleSearchSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setActiveSearch(searchInput.trim());
+  };
+
+  const handleClearSearch = () => {
+    setSearchInput('');
+    setActiveSearch('');
+  };
+
+  // Filtered rows by search query and status filter
   const filteredRows = useMemo(() => {
-    const q = (localSearch || globalSearch).toLowerCase().trim();
-    if (!q) return tableRows;
+    const q = (activeSearch || globalSearch).toLowerCase().trim();
 
     return tableRows.filter((row) => {
-      return Object.values(row.data).some((val) =>
-        String(val || '').toLowerCase().includes(q)
-      );
+      // 1. Status Filter
+      if (statusFilter !== 'All') {
+        const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+        const rowStatus = statusCol ? String(row.data[statusCol.key] || 'New').trim() : '';
+        if (rowStatus !== statusFilter) {
+          return false;
+        }
+      }
+
+      // 2. Search Filter
+      if (q) {
+        return Object.values(row.data).some((val) =>
+          String(val || '').toLowerCase().includes(q)
+        );
+      }
+
+      return true;
     });
-  }, [tableRows, localSearch, globalSearch]);
+  }, [tableRows, activeSearch, globalSearch, statusFilter, table.columns]);
+
+  // Status options for dropdown filter
+  const statusOptions = useMemo(() => {
+    const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+    const baseOpts = statusCol?.options && statusCol.options.length > 0
+      ? statusCol.options
+      : ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed'];
+    const merged = Array.from(new Set([...baseOpts, 'Hot', 'Closed Won', 'Closed Lost']));
+    return merged.filter((opt) => opt !== 'Not Interested');
+  }, [table.columns]);
 
   // Handle cell edit
   const handleCellChange = (rowId: string, colKey: string, value: any) => {
+    if (String(value).trim() === 'Not Interested') {
+      deleteCustomTableRow(rowId);
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'Lead marked as "Not Interested" and removed from table.' },
+        })
+      );
+      return;
+    }
     updateCustomTableRow(rowId, { [colKey]: value });
   };
 
@@ -147,8 +201,9 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     table.columns.forEach((col) => {
       if (col.type === 'date') {
         defaultData[col.key] = new Date().toISOString().split('T')[0];
-      } else if (col.type === 'number') {
-        defaultData[col.key] = 0;
+        defaultData[`${col.key}_time`] = '10:00';
+      } else if (col.type === 'number' || col.type === 'aed') {
+        defaultData[col.key] = '';
       } else if (col.type === 'select') {
         defaultData[col.key] = 'New';
       } else {
@@ -179,184 +234,6 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     document.body.removeChild(link);
   };
 
-  // Parse raw text into matrix when in paste mode
-  useEffect(() => {
-    if (activeImportMode === 'paste') {
-      const matrix = parseSpreadsheetText(pasteRawText);
-      setParsedMatrix(matrix);
-      setParseError(null);
-    }
-  }, [pasteRawText, activeImportMode]);
-
-  // Reset modal state on open/close
-  useEffect(() => {
-    if (!isPasteDrawerOpen) {
-      setUploadedFile(null);
-      setPasteRawText('');
-      setParsedMatrix([]);
-      setParseError(null);
-      setColumnMappings({});
-      setIsParsing(false);
-    }
-  }, [isPasteDrawerOpen]);
-
-  // Total columns detected in the pasted or uploaded data
-  const detectedColCount = useMemo(() => {
-    if (parsedMatrix.length === 0) return 0;
-    return Math.max(...parsedMatrix.map((r) => r.length));
-  }, [parsedMatrix]);
-
-  // Auto-initialize mappings when parsedMatrix changes
-  useEffect(() => {
-    if (parsedMatrix.length === 0) {
-      setColumnMappings({});
-      return;
-    }
-
-    const firstRow = parsedMatrix[0] || [];
-    const targets = table.columns.map((c) => ({ key: c.key, name: c.name }));
-
-    // Detect if first row looks like headers
-    const looksLikeHeader = firstRow.some((val) => {
-      const v = val.toLowerCase();
-      return /name|phone|contact|mobile|budget|price|status|date|notes|project|developer|community|unit|id/i.test(v);
-    });
-    setHasHeaderRow(looksLikeHeader);
-
-    const newMappings: Record<number, string> = {};
-    for (let colIdx = 0; colIdx < detectedColCount; colIdx++) {
-      const headerTitle = firstRow[colIdx] || '';
-      const sampleValues = parsedMatrix.slice(looksLikeHeader ? 1 : 0, 4).map((r) => r[colIdx] || '');
-      const guessedKey = guessColumnMapping(headerTitle, sampleValues, targets);
-      
-      if (guessedKey) {
-        newMappings[colIdx] = guessedKey;
-      } else if (table.columns[colIdx]) {
-        newMappings[colIdx] = table.columns[colIdx].key;
-      } else {
-        newMappings[colIdx] = 'SKIP';
-      }
-    }
-
-    setColumnMappings(newMappings);
-  }, [parsedMatrix, table.columns, detectedColCount]);
-
-  // Handle file upload
-  const handleFileSelected = async (file: File) => {
-    setParseError(null);
-    setUploadedFile(file);
-    setIsParsing(true);
-
-    try {
-      const matrix = await parseExcelFile(file);
-      if (matrix.length === 0) {
-        setParseError('The uploaded file appears to be empty.');
-        setParsedMatrix([]);
-      } else {
-        setParsedMatrix(matrix);
-      }
-    } catch (err: any) {
-      console.error('Error parsing Excel file:', err);
-      setParseError(err.message || 'Failed to read file. Please ensure it is a valid .xlsx, .xls, or .csv file.');
-      setParsedMatrix([]);
-    } finally {
-      setIsParsing(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelected(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleDownloadCustomTemplate = () => {
-    const headers = table.columns.map((c) => c.name);
-    const sampleRows = [
-      table.columns.map((col, idx) => {
-        if (col.type === 'tel') return '+971 50 123 4567';
-        if (col.type === 'number') return '5000000';
-        if (col.type === 'select') return 'Active';
-        if (col.type === 'date') return '2026-10-15';
-        return `Sample ${col.name}`;
-      })
-    ];
-    downloadExcelTemplate(`${table.name.replace(/\s+/g, '_')}_Template.xlsx`, headers, sampleRows);
-  };
-
-  // Parse and import bulk paste with column mappings
-  const handleProcessBulkPaste = () => {
-    if (parsedMatrix.length === 0) return;
-
-    const startRow = hasHeaderRow ? 1 : 0;
-    const newRowsData: Record<string, any>[] = [];
-
-    for (let r = startRow; r < parsedMatrix.length; r++) {
-      const tokens = parsedMatrix[r];
-      if (!tokens || tokens.every((t) => !t.trim())) continue;
-
-      const rowData: Record<string, any> = {};
-
-      // Initialize default column values
-      table.columns.forEach((col) => {
-        rowData[col.key] = col.type === 'number' ? 0 : col.type === 'date' ? new Date().toISOString().split('T')[0] : '';
-      });
-
-      // Map values based on user's column configuration
-      Object.entries(columnMappings).forEach(([colIdxStr, targetColKey]: [string, string]) => {
-        const colIdx = Number(colIdxStr);
-        if (targetColKey === 'SKIP') return;
-
-        const rawVal = tokens[colIdx] !== undefined ? tokens[colIdx].trim() : '';
-        const targetCol = table.columns.find((c) => c.key === targetColKey);
-
-        if (targetCol) {
-          if (targetCol.type === 'number') {
-            const num = parseFloat(rawVal.replace(/[^0-9.-]/g, ''));
-            (rowData as Record<string, any>)[targetColKey] = isNaN(num) ? 0 : num;
-          } else {
-            (rowData as Record<string, any>)[targetColKey] = rawVal;
-          }
-        }
-      });
-
-      newRowsData.push(rowData);
-    }
-
-    if (newRowsData.length > 0) {
-      bulkAddCustomTableRows(table.id, newRowsData);
-      setPasteRawText('');
-      setIsPasteDrawerOpen(false);
-      window.dispatchEvent(
-        new CustomEvent('crm-show-toast', {
-          detail: { msg: `Successfully imported ${newRowsData.length} rows into ${table.name}` },
-        })
-      );
-    }
-  };
-
-  // Helper to load realistic sample data matching this table's defined columns
-  const handleLoadSampleData = () => {
-    const sampleRows = [
-      ['Khalid Al-Qasimi', '+971 50 777 8899', '4500000', 'Active', '2026-10-10', 'High intent buyer, interested in 3BR Palm view'],
-      ['Elena Rostova', '+971 52 333 4455', '2200000', 'Follow-up', '2026-10-12', 'Requested updated payment plan and floor plans'],
-      ['Marcus Vance', '+971 55 666 1122', '8900000', 'Interested', '2026-10-15', 'Full floor investor, looking for bulk booking discount'],
-    ];
-
-    const lines = sampleRows.map((vals) => {
-      return table.columns.map((col, idx) => {
-        if (col.type === 'tel') return vals[1];
-        if (col.type === 'number') return vals[2];
-        if (col.type === 'select') return vals[3];
-        if (col.type === 'date') return vals[4];
-        return vals[idx] || (idx === 0 ? vals[0] : vals[5]);
-      }).join('\t');
-    });
-
-    setPasteRawText(lines.join('\n'));
-  };
 
   return (
     <div className="space-y-4">
@@ -387,17 +264,61 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
         </div>
 
         {/* Table Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Local Search */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search table..."
-              value={localSearch}
-              onChange={(e) => setLocalSearch(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-md text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#0B1B32] focus:bg-white w-36 sm:w-48 transition-all"
-            />
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Local Search Form with Dedicated Search Button */}
+          <form 
+            onSubmit={handleSearchSubmit}
+            className="flex items-center shadow-2xs"
+          >
+            <div className="relative flex items-center">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search in table..."
+                value={searchInput}
+                onChange={(e) => {
+                  setSearchInput(e.target.value);
+                  if (e.target.value === '') setActiveSearch('');
+                }}
+                className="pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-l-md text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#0B1B32] focus:bg-white w-32 sm:w-44 transition-all"
+              />
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="absolute right-2 text-slate-400 hover:text-slate-600 text-xs cursor-pointer font-bold"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <button
+              type="submit"
+              className="px-3 py-1.5 bg-[#0B1B32] hover:bg-[#152945] text-white text-xs font-bold rounded-r-md border border-[#0B1B32] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+              title="Click to search table"
+            >
+              <Search className="w-3 h-3 stroke-[2.5]" />
+              <span>Search</span>
+            </button>
+          </form>
+
+          {/* Status Dropdown Filter */}
+          <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-md px-2.5 py-1 shadow-2xs">
+            <Filter className="w-3.5 h-3.5 text-[#0B1B32] shrink-0" />
+            <span className="text-[11px] font-bold text-slate-600 uppercase">Status:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="bg-transparent text-xs font-bold text-[#0B1B32] focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="All">All Statuses ({tableRows.length})</option>
+              {statusOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Bulk Import from Excel Button */}
@@ -479,8 +400,14 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                         </span>
                         <span>{col.name}</span>
                       </div>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-300 font-normal">
-                        {col.type}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-normal uppercase ${
+                        col.type === 'aed' && col.isLeadValue
+                          ? 'bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40'
+                          : col.type === 'aed'
+                          ? 'bg-[#D4AF37]/25 text-amber-300 font-bold'
+                          : 'bg-white/10 text-slate-300'
+                      }`}>
+                        {col.type === 'aed' ? (col.isLeadValue ? '💰 Lead Value' : 'AED') : col.type}
                       </span>
                     </div>
                   </th>
@@ -580,35 +507,49 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                         }
 
                         // Special Date column with Google Calendar Sync and Presets
+                        // Date column
                         if (col.type === 'date') {
-                          const isFollowUpCol =
-                            col.name.toLowerCase().includes('follow') ||
-                            col.name.toLowerCase().includes('date');
+                          const isFollowUpCol = col.name.toLowerCase().includes('follow');
+                          const timeVal = row.data[`${col.key}_time`] || '10:00';
 
                           return (
                             <td key={col.id} className="py-1 px-2">
-                              <div className="flex flex-col gap-1 min-w-[150px]">
+                              <div className={`flex flex-col gap-1 ${isFollowUpCol ? 'min-w-[210px]' : 'min-w-[130px]'}`}>
                                 <div className="flex items-center gap-1.5">
                                   <input
                                     type="date"
                                     value={cellValue || ''}
-                                    onChange={(e) => handleCellChange(row.id, col.key, e.target.value)}
+                                    onChange={(e) => {
+                                      latestDateMapRef.current[`${row.id}_${col.key}`] = e.target.value;
+                                      handleCellChange(row.id, col.key, e.target.value);
+                                    }}
                                     className="px-2 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-medium text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] transition-colors"
                                   />
-                                  {isFollowUpCol && cellValue && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSyncGoogleCalendar(row)}
-                                      disabled={syncingRowId === row.id}
-                                      className="p-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition-colors cursor-pointer"
-                                      title="Schedule this date directly to Google Calendar"
-                                    >
-                                      {syncingRowId === row.id ? (
-                                        <span className="w-3 h-3 border-2 border-amber-800 border-t-transparent rounded-full animate-spin inline-block" />
-                                      ) : (
-                                        <CalendarPlus className="w-3.5 h-3.5 text-[#0B1B32]" />
+                                  {isFollowUpCol && (
+                                    <>
+                                      <input
+                                        type="time"
+                                        value={timeVal}
+                                        onChange={(e) => handleCellChange(row.id, `${col.key}_time`, e.target.value)}
+                                        title="Time scheduled in Google Calendar"
+                                        className="px-1.5 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-mono font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] w-[75px]"
+                                      />
+                                      {cellValue && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSyncGoogleCalendar(row)}
+                                          disabled={syncingRowId === row.id}
+                                          className="p-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition-colors cursor-pointer shrink-0"
+                                          title={`Schedule to Google Calendar at ${timeVal}`}
+                                        >
+                                          {syncingRowId === row.id ? (
+                                            <span className="w-3.5 h-3.5 border-2 border-amber-800 border-t-transparent rounded-full animate-spin inline-block" />
+                                          ) : (
+                                            <CalendarPlus className="w-3.5 h-3.5 text-[#0B1B32]" />
+                                          )}
+                                        </button>
                                       )}
-                                    </button>
+                                    </>
                                   )}
                                 </div>
 
@@ -657,37 +598,71 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                           );
                         }
 
-                        // Special Number column
+                        // Special AED Currency column
+                        if (col.type === 'aed') {
+                          return (
+                            <td key={col.id} className="p-0">
+                              <EditableCell
+                                type="number"
+                                value={cellValue}
+                                onChange={(val) => handleCellChange(row.id, col.key, val === '' ? '' : Number(val))}
+                                placeholder="AED 0"
+                                formatter={(v) => {
+                                  if (v === '' || v === null || v === undefined) return '';
+                                  const num = Number(v);
+                                  return isNaN(num) ? String(v) : `AED ${num.toLocaleString()}`;
+                                }}
+                                className="font-mono text-right font-medium text-slate-800"
+                                inputClassName="text-right font-mono font-medium"
+                              />
+                            </td>
+                          );
+                        }
+
+                        // Special Plain Number column
                         if (col.type === 'number') {
                           return (
                             <td key={col.id} className="p-0">
-                              <input
+                              <EditableCell
                                 type="number"
                                 value={cellValue}
-                                onChange={(e) => handleCellChange(row.id, col.key, parseFloat(e.target.value) || 0)}
+                                onChange={(val) => handleCellChange(row.id, col.key, val === '' ? '' : Number(val))}
                                 placeholder="0"
-                                className="w-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none focus:bg-white text-slate-800 font-mono text-right"
+                                className="font-mono text-right"
+                                inputClassName="text-right font-mono"
                               />
                             </td>
                           );
                         }
 
                         // Special Select / Status column
-                        if (col.type === 'select') {
+                        const isStatusCol = col.type === 'select' || col.name.toLowerCase().includes('status');
+                        if (isStatusCol) {
+                          const baseOptions = col.options && col.options.length > 0
+                            ? col.options
+                            : ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed', 'Not Interested'];
+                          const currentOptions = Array.from(new Set([...baseOptions, 'Hot', 'Closed Won', 'Closed Lost', 'Not Interested']));
+
                           return (
                             <td key={col.id} className="p-0">
                               <select
                                 value={cellValue || 'New'}
                                 onChange={(e) => handleCellChange(row.id, col.key, e.target.value)}
-                                className="w-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none focus:bg-white text-slate-800 font-medium"
+                                className={`w-full px-2 py-1 text-xs bg-transparent border-0 focus:outline-none focus:bg-white font-medium cursor-pointer ${
+                                  cellValue === 'Hot' ? 'text-red-600 font-bold' :
+                                  cellValue === 'Closed Won' ? 'text-emerald-700 font-bold' :
+                                  cellValue === 'Closed Lost' ? 'text-slate-500 line-through' :
+                                  'text-slate-800'
+                                }`}
                               >
-                                <option value="New">New</option>
-                                <option value="Active">Active</option>
-                                <option value="Follow-up">Follow-up</option>
-                                <option value="Interested">Interested</option>
-                                <option value="Under Negotiation">Under Negotiation</option>
-                                <option value="Closed">Closed</option>
-                                <option value="Not Interested">Not Interested</option>
+                                {currentOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt === 'Hot' ? '🔥 Hot' :
+                                     opt === 'Closed Won' ? '🏆 Closed Won' :
+                                     opt === 'Closed Lost' ? '❌ Closed Lost' :
+                                     opt}
+                                  </option>
+                                ))}
                               </select>
                             </td>
                           );
@@ -770,359 +745,13 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
         </div>
       </div>
 
-      {/* Bulk Import from Excel Modal */}
-      {isPasteDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#0B1B32]/75 backdrop-blur-xs">
-          <div 
-            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="bg-[#0B1B32] px-6 py-4 text-white flex items-center justify-between border-b border-[#D4AF37]/50">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#D4AF37] to-[#AA8010] text-[#0B1B32] flex items-center justify-center font-bold shadow-md">
-                  <FileSpreadsheet className="w-5 h-5 text-[#0B1B32]" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white font-display">
-                      Bulk Import from Excel
-                    </h3>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                      {table.name}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300">
-                    Upload an Excel file (.xlsx, .xls, .csv) or paste copied cells
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleDownloadCustomTemplate}
-                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-all cursor-pointer"
-                  title="Download Excel template pre-configured with this table's columns"
-                >
-                  <Download className="w-3.5 h-3.5 text-[#D4AF37]" />
-                  <span>Download Excel Template</span>
-                </button>
-                <button
-                  onClick={() => setIsPasteDrawerOpen(false)}
-                  className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Mode Switcher Tabs */}
-            <div className="bg-slate-100 px-6 pt-3 border-b border-slate-200 flex items-center justify-between">
-              <div className="flex space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveImportMode('upload')}
-                  className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-2 cursor-pointer border-t border-x ${
-                    activeImportMode === 'upload'
-                      ? 'bg-white text-[#0B1B32] border-slate-200 -mb-px'
-                      : 'bg-transparent text-slate-600 hover:text-slate-900 border-transparent'
-                  }`}
-                >
-                  <UploadCloud className="w-4 h-4 text-[#D4AF37]" />
-                  <span>📁 Upload Excel File (.xlsx / .csv)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveImportMode('paste')}
-                  className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-2 cursor-pointer border-t border-x ${
-                    activeImportMode === 'paste'
-                      ? 'bg-white text-[#0B1B32] border-slate-200 -mb-px'
-                      : 'bg-transparent text-slate-600 hover:text-slate-900 border-transparent'
-                  }`}
-                >
-                  <ClipboardPaste className="w-4 h-4 text-blue-600" />
-                  <span>📋 Paste Copied Cells</span>
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleDownloadCustomTemplate}
-                className="sm:hidden text-xs text-[#0B1B32] font-semibold flex items-center gap-1 underline mb-2 cursor-pointer"
-              >
-                <Download className="w-3 h-3" /> Template
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-6 space-y-4 flex-1 overflow-y-auto text-xs text-slate-700">
-              {/* Expected Columns Pill */}
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
-                <p className="font-semibold mb-1">Expected Table Columns ({table.columns.length}):</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {table.columns.map((c, i) => (
-                    <span
-                      key={c.id}
-                      className="px-2 py-0.5 rounded bg-white border border-amber-300 text-[11px] font-mono text-slate-700 font-bold"
-                    >
-                      {String.fromCharCode(65 + (i % 26))}: {c.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Mode A: File Upload */}
-              {activeImportMode === 'upload' && (
-                <div className="space-y-3">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".xlsx, .xls, .csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        handleFileSelected(e.target.files[0]);
-                      }
-                    }}
-                  />
-
-                  {!uploadedFile ? (
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setIsDragOver(true);
-                      }}
-                      onDragLeave={() => setIsDragOver(false)}
-                      onDrop={handleDrop}
-                      onClick={() => fileInputRef.current?.click()}
-                      className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${
-                        isDragOver
-                          ? 'border-[#D4AF37] bg-amber-50/60 scale-[0.99]'
-                          : 'border-slate-300 hover:border-[#0B1B32] bg-slate-50/70 hover:bg-white'
-                      }`}
-                    >
-                      <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center text-[#0B1B32] shadow-xs">
-                        <UploadCloud className="w-7 h-7 text-[#D4AF37]" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-[#0B1B32]">
-                          Click to choose an Excel file or drag & drop here
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Supports Microsoft Excel (<strong className="text-slate-700">.xlsx, .xls</strong>) and CSV (<strong className="text-slate-700">.csv</strong>)
-                        </p>
-                      </div>
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0B1B32] text-white text-xs font-bold mt-1 shadow-xs hover:bg-[#152945]">
-                        Browse Computer
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold">
-                          <FileSpreadsheet className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h4 className="font-bold text-slate-800 text-sm">{uploadedFile.name}</h4>
-                          <p className="text-xs text-slate-500">
-                            {(uploadedFile.size / 1024).toFixed(1)} KB · {parsedMatrix.length} rows read
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUploadedFile(null);
-                          setParsedMatrix([]);
-                          if (fileInputRef.current) fileInputRef.current.value = '';
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer"
-                      >
-                        Change File
-                      </button>
-                    </div>
-                  )}
-
-                  {isParsing && (
-                    <div className="text-center py-4 text-xs font-semibold text-slate-500 flex items-center justify-center gap-2">
-                      <span className="w-3.5 h-3.5 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin" />
-                      <span>Reading and analyzing Excel spreadsheet...</span>
-                    </div>
-                  )}
-
-                  {parseError && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-                      <span>{parseError}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Mode B: Copy-Paste */}
-              {activeImportMode === 'paste' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Paste Copied Excel Data Here:
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleLoadSampleData}
-                      className="px-2.5 py-1 rounded bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#0B1B32] border border-[#D4AF37]/40 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <Sparkles className="w-3 h-3 text-[#D4AF37]" />
-                      <span>Auto-Fill Sample Data</span>
-                    </button>
-                  </div>
-                  <textarea
-                    rows={4}
-                    placeholder={`Paste cells directly here from your spreadsheet...\nColumn 1 \t Column 2 \t Column 3 ...`}
-                    value={pasteRawText}
-                    onChange={(e) => setPasteRawText(e.target.value)}
-                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0B1B32] focus:bg-white resize-y"
-                  />
-                </div>
-              )}
-
-              {/* Column Mapping Section */}
-              {parsedMatrix.length > 0 && (
-                <div className="space-y-3 pt-2 border-t border-slate-200">
-                  {/* Header Checkbox & Summary */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                    <span className="text-xs text-slate-700 font-semibold">
-                      Detected <strong>{parsedMatrix.length}</strong> rows and <strong>{detectedColCount}</strong> columns
-                    </span>
-                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={hasHeaderRow}
-                        onChange={(e) => setHasHeaderRow(e.target.checked)}
-                        className="rounded text-[#0B1B32] focus:ring-0"
-                      />
-                      <span>First row contains headers (do not insert as data row)</span>
-                    </label>
-                  </div>
-
-                  {/* Column Mapping Selector */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Map Excel Columns to Table Columns:
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                      {Array.from({ length: detectedColCount }).map((_, cIdx) => {
-                        const firstVal = parsedMatrix[0]?.[cIdx] || `Col ${cIdx + 1}`;
-                        const currentTarget = columnMappings[cIdx] || 'SKIP';
-
-                        return (
-                          <div
-                            key={cIdx}
-                            className="p-2 rounded-lg bg-slate-50 border border-slate-200 space-y-1 text-xs"
-                          >
-                            <div className="flex items-center justify-between text-[11px] text-slate-500">
-                              <span className="font-mono font-bold text-slate-700">
-                                Excel Col {cIdx + 1}
-                              </span>
-                              <span className="truncate max-w-[120px] italic text-slate-400" title={firstVal}>
-                                "{firstVal}"
-                              </span>
-                            </div>
-
-                            <select
-                              value={currentTarget}
-                              onChange={(e) =>
-                                setColumnMappings((prev) => ({
-                                  ...prev,
-                                  [cIdx]: e.target.value,
-                                }))
-                              }
-                              className={`w-full px-2 py-1.5 text-xs rounded-md border font-semibold ${
-                                currentTarget === 'SKIP'
-                                  ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                  : 'bg-white text-[#0B1B32] border-[#0B1B32]'
-                              }`}
-                            >
-                              <option value="SKIP">❌ Skip / Do Not Import</option>
-                              {table.columns.map((col) => (
-                                <option key={col.id} value={col.key}>
-                                  ➔ {col.name} ({col.type})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Live Import Preview Table */}
-                  <div>
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Preview (First 3 Rows):
-                    </p>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-36">
-                      <table className="w-full text-left text-[11px]">
-                        <thead className="bg-[#0B1B32] text-white">
-                          <tr>
-                            <th className="p-2 w-8 text-center font-mono">#</th>
-                            {table.columns.map((col) => (
-                              <th key={col.id} className="p-2 font-bold whitespace-nowrap">
-                                {col.name}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 bg-white">
-                          {parsedMatrix.slice(hasHeaderRow ? 1 : 0, (hasHeaderRow ? 1 : 0) + 3).map((r, rIdx) => (
-                            <tr key={rIdx} className="hover:bg-slate-50">
-                              <td className="p-2 text-center text-slate-400 font-mono text-[10px] bg-slate-50">
-                                {rIdx + 1}
-                              </td>
-                              {table.columns.map((col) => {
-                                const mappedColIdx = Object.keys(columnMappings).find(
-                                  (k) => columnMappings[Number(k)] === col.key
-                                );
-                                const val = mappedColIdx !== undefined ? r[Number(mappedColIdx)] : '';
-
-                                return (
-                                  <td key={col.id} className="p-2 text-slate-700 whitespace-nowrap max-w-[150px] truncate">
-                                    {val || <span className="text-slate-300 italic">empty</span>}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setIsPasteDrawerOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleProcessBulkPaste}
-                disabled={parsedMatrix.length === 0}
-                className="px-6 py-2.5 bg-[#0B1B32] hover:bg-[#152945] disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer shadow-md"
-              >
-                <CheckCircle2 className="w-4 h-4 text-[#D4AF37]" />
-                <span>Import {parsedMatrix.length > 0 ? (hasHeaderRow ? Math.max(0, parsedMatrix.length - 1) : parsedMatrix.length) : 0} Rows from Excel</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Bulk Import from Excel Modal / Drawer */}
+      <ExcelPasteDrawer
+        isOpen={isPasteDrawerOpen}
+        onClose={() => setIsPasteDrawerOpen(false)}
+        targetTable={table}
+        onImportCustomRows={bulkAddCustomTableRows}
+      />
     </div>
   );
 };

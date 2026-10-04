@@ -34,7 +34,7 @@ export async function createDirectGoogleCalendarEvent(
     clientType?: string;
     expectationRequirements?: string;
   },
-  type: 'project' | 'secondary' = 'project'
+  type: 'project' | 'secondary' | 'custom' = 'custom'
 ): Promise<CalendarEventResult> {
   if (!lead.followUpDate) {
     return {

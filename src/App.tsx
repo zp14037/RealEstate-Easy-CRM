@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { CrmProvider, useCrm } from './context/CrmContext';
 import { HeaderNav } from './components/HeaderNav';
 import { DashboardView } from './components/DashboardView';
-import { ProjectLeadsView } from './components/ProjectLeadsView';
 import { CustomTableView } from './components/CustomTableView';
 import { 
   Building2, 
@@ -35,12 +34,10 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
     setActiveTab, 
     overdueCount, 
     dueTodayCount,
-    projectLeads,
     customTables,
     customRows,
     deleteCustomTable,
-    addBlankProjectLead,
-    updateProjectLead,
+    addCustomTableRow,
   } = useCrm();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -63,40 +60,58 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
 
   // Helper for CEO test demo (instant row insert, zero popups)
   const handleQuickAdd4MonthLead = () => {
-    const newId = addBlankProjectLead('top');
-    updateProjectLead(newId, {
-      projectName: 'Palm Beach Penthouse Collection',
-      developer: 'Nakheel',
-      community: 'Palm Jumeirah',
-      unitDetails: '4BR Super Luxury Penthouse, 4,100 sq.ft',
-      propertyType: 'Penthouse',
-      handoverDetails: 'Q1 2028',
-      ownerName: 'CEO Demo VIP Client',
-      contactNo: '+971 50 999 8888',
-      callStatus: 'Follow-up',
-      followUpDate: getDateOffset(0, 4), // 4 MONTHS
-      budgetAED: 18000000,
-      notes: 'Demo test: Client requested call back in exactly 4 months after capital reallocation.',
-    });
-    setActiveTab('project_leads');
+    const targetTable = customTables.find((t) => t.id === activeTab) || customTables[0];
+    if (!targetTable) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'Please create a custom table first before inserting demo rows!', isError: true },
+        })
+      );
+      return;
+    }
+    const dateCol = targetTable.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+    const nameCol = targetTable.columns.find((c) => c.name.toLowerCase().includes('name') || c.name.toLowerCase().includes('client') || c.name.toLowerCase().includes('owner'));
+    const telCol = targetTable.columns.find((c) => c.type === 'tel' || c.name.toLowerCase().includes('contact') || c.name.toLowerCase().includes('phone'));
+    const statusCol = targetTable.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+
+    const rowData: Record<string, any> = {};
+    if (nameCol) rowData[nameCol.key] = 'VIP Client (4-Mo Follow-up)';
+    if (telCol) rowData[telCol.key] = '+971 50 999 8888';
+    if (dateCol) {
+      rowData[dateCol.key] = getDateOffset(0, 4);
+      rowData[`${dateCol.key}_time`] = '10:00';
+    }
+    if (statusCol) rowData[statusCol.key] = 'Follow-up';
+
+    addCustomTableRow(targetTable.id, rowData, 'top');
+    setActiveTab(targetTable.id);
   };
 
   const handleQuickAddTodayLead = () => {
-    const newId = addBlankProjectLead('top');
-    updateProjectLead(newId, {
-      projectName: 'Creek Harbour Horizon',
-      developer: 'Emaar Properties',
-      community: 'Dubai Creek Harbour',
-      unitDetails: '3BR Waterfront, 1,850 sq.ft',
-      propertyType: 'Apartment',
-      handoverDetails: 'Q4 2026',
-      ownerName: 'Hamdan Al-Maktoum Inquirer',
-      contactNo: '+971 50 555 4321',
-      callStatus: 'Follow-up',
-      followUpDate: getTodayDateString(), // DUE TODAY
-      budgetAED: 4500000,
-      notes: 'Demo test: Hot buyer waiting for updated floor plan & booking token link today.',
-    });
+    const targetTable = customTables.find((t) => t.id === activeTab) || customTables[0];
+    if (!targetTable) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'Please create a custom table first before inserting demo rows!', isError: true },
+        })
+      );
+      return;
+    }
+    const dateCol = targetTable.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+    const nameCol = targetTable.columns.find((c) => c.name.toLowerCase().includes('name') || c.name.toLowerCase().includes('client') || c.name.toLowerCase().includes('owner'));
+    const telCol = targetTable.columns.find((c) => c.type === 'tel' || c.name.toLowerCase().includes('contact') || c.name.toLowerCase().includes('phone'));
+    const statusCol = targetTable.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+
+    const rowData: Record<string, any> = {};
+    if (nameCol) rowData[nameCol.key] = 'Active Client Due Today';
+    if (telCol) rowData[telCol.key] = '+971 50 555 4321';
+    if (dateCol) {
+      rowData[dateCol.key] = getTodayDateString();
+      rowData[`${dateCol.key}_time`] = '10:00';
+    }
+    if (statusCol) rowData[statusCol.key] = 'Follow-up';
+
+    addCustomTableRow(targetTable.id, rowData, 'top');
     setActiveTab('dashboard');
   };
 
@@ -163,32 +178,24 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
               )}
             </button>
 
-            {/* Menu Item 2: Project & Off-Plan Leads (Spreadsheet) */}
-            <button
-              id="nav-tab-projects"
-              onClick={() => { setActiveTab('project_leads'); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center justify-between px-4 py-3 transition-colors text-left cursor-pointer ${
-                activeTab === 'project_leads'
-                  ? 'bg-[#D4AF37]/15 border-l-4 border-[#D4AF37] text-white font-bold'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5 border-l-4 border-transparent'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <FileSpreadsheet className={`w-4 h-4 ${activeTab === 'project_leads' ? 'text-blue-400' : 'text-slate-500'}`} />
-                <span className="text-sm">Project Leads (11 Col)</span>
-              </div>
-              <span className="text-xs text-slate-400 bg-white/10 px-2 py-0.5 rounded font-mono">
-                {projectLeads.length}
-              </span>
-            </button>
-
             {/* Custom Dynamic Tables Section */}
-            {customTables.length > 0 && (
-              <div className="mt-4 pt-3 border-t border-white/10">
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-4 mb-2">
+            <div className="mt-4 pt-3 border-t border-white/10">
+              <div className="flex items-center justify-between px-4 mb-2">
+                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
                   Custom Tables
                 </p>
-                {customTables.map((table) => {
+                <span className="text-[10px] font-mono text-slate-400">
+                  {customTables.length}
+                </span>
+              </div>
+
+              {customTables.length === 0 ? (
+                <div className="px-4 py-3 text-center">
+                  <p className="text-xs text-slate-500">No tables created yet.</p>
+                  <p className="text-[10px] text-slate-600 mt-1">Sign in with Google & click "+ Add Table" to start.</p>
+                </div>
+              ) : (
+                customTables.map((table) => {
                   const isActive = activeTab === table.id;
                   const rowCount = customRows.filter((r) => r.tableId === table.id).length;
 
@@ -226,9 +233,9 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
                       </button>
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
 
           {/* Quick Metrics in Sidebar */}
@@ -245,7 +252,7 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Total Records</span>
-              <span className="font-bold text-white">{projectLeads.length + customRows.length}</span>
+              <span className="font-bold text-white">{customRows.length}</span>
             </div>
           </div>
         </nav>
@@ -301,7 +308,6 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
         <main className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
           <div className="max-w-7xl mx-auto">
             {activeTab === 'dashboard' && <DashboardView />}
-            {activeTab === 'project_leads' && <ProjectLeadsView />}
             {customTables.find((t) => t.id === activeTab) && (
               <CustomTableView table={customTables.find((t) => t.id === activeTab)!} />
             )}
@@ -386,7 +392,7 @@ export default function App() {
   }
 
   return (
-    <CrmProvider>
+    <CrmProvider currentUser={currentUser}>
       <CrmMainLayout onLogout={handleLogout} currentUser={currentUser} />
     </CrmProvider>
   );

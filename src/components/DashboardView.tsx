@@ -36,19 +36,18 @@ export const DashboardView: React.FC = () => {
     overdueCount, 
     dueTodayCount, 
     totalActiveCount, 
-    projectLeads, 
-    secondaryLeads, 
+    customTables,
+    customRows,
     setActiveTab, 
     quickReschedulePreset, 
     markDone, 
     markClosedDeal, 
     markNotInterested,
     searchQuery,
-    updateProjectLead,
-    updateSecondaryLead
+    updateCustomTableRow
   } = useCrm();
 
-  const [activeFilter, setActiveFilter] = useState<'all' | 'overdue' | 'today' | 'projects' | 'secondary'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'overdue' | 'today'>('all');
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
   const [savingCalId, setSavingCalId] = useState<string | null>(null);
   
@@ -57,10 +56,13 @@ export const DashboardView: React.FC = () => {
   const [noteInputText, setNoteInputText] = useState('');
 
   const handleUpdateTime = (item: ActionItem, newTime: string) => {
-    if (item.sourceType === 'project') {
-      updateProjectLead(item.leadId, { followUpTime: newTime });
-    } else {
-      updateSecondaryLead(item.leadId, { followUpTime: newTime });
+    if (item.sourceType === 'custom') {
+      const row = customRows.find(r => r.id === item.leadId);
+      const table = customTables.find(t => t.id === row?.tableId);
+      const dateCol = table?.columns.find(c => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+      if (dateCol) {
+        updateCustomTableRow(item.leadId, { [`${dateCol.key}_time`]: newTime });
+      }
     }
   };
 
@@ -87,8 +89,6 @@ export const DashboardView: React.FC = () => {
     // Tab filter
     if (activeFilter === 'overdue' && !item.isOverdue) return false;
     if (activeFilter === 'today' && !item.isToday) return false;
-    if (activeFilter === 'projects' && item.sourceType !== 'project') return false;
-    if (activeFilter === 'secondary' && item.sourceType !== 'secondary') return false;
 
     // Search query
     if (searchQuery.trim()) {
@@ -130,15 +130,54 @@ export const DashboardView: React.FC = () => {
     return name.slice(0, 2).toUpperCase();
   };
 
-  // Pipeline summary
-  const totalPipelineValue = [
-    ...projectLeads.map((l) => l.budgetAED || 0),
-    ...secondaryLeads.map((l) => l.budget || 0),
-  ].reduce((a, b) => a + b, 0);
+  // Active Pipeline summary: sum of all AED amounts from custom tables
+  // strictly excluding leads with status "Closed", "Not Interested", or "Deal Closed"
+  let totalPipelineValue = 0;
+  customTables.forEach((table) => {
+    // Strictly prioritize the designated Lead Value column (only one per table)
+    const leadValueCol = table.columns.find((c) => c.type === 'aed' && c.isLeadValue)
+      || table.columns.find((c) => c.type === 'aed')
+      || table.columns.find((c) => c.name.toLowerCase().includes('budget') || c.name.toLowerCase().includes('aed') || c.name.toLowerCase().includes('price'));
 
-  const formattedPipeline = totalPipelineValue > 0 
-    ? `AED ${(totalPipelineValue / 1000000).toFixed(1)}M` 
-    : 'AED 18.2M';
+    if (!leadValueCol) return;
+
+    const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+    const rows = customRows.filter((r) => r.tableId === table.id);
+
+    rows.forEach((r) => {
+      // Strictly exclude Closed, Closed Won, Closed Lost, Deal Closed, and Not Interested
+      if (statusCol) {
+        const s = String(r.data[statusCol.key] || '').trim();
+        if (
+          s === 'Closed' || 
+          s === 'Not Interested' || 
+          s === 'Deal Closed' || 
+          s === 'Lost' ||
+          s === 'Closed Won' ||
+          s === 'Closed Lost'
+        ) {
+          return;
+        }
+      }
+
+      const raw = String(r.data[leadValueCol.key] ?? '');
+      const val = parseFloat(raw.replace(/[^0-9.-]/g, ''));
+      if (!isNaN(val) && val > 0) {
+        totalPipelineValue += val;
+      }
+    });
+  });
+
+  const formatPipelineDisplay = (val: number): string => {
+    if (val <= 0) return 'AED 0';
+    if (val >= 1_000_000) {
+      const inMillions = val / 1_000_000;
+      return `AED ${inMillions % 1 === 0 ? inMillions.toFixed(0) : inMillions.toFixed(2)}M`;
+    }
+    return `AED ${val.toLocaleString()}`;
+  };
+
+  const formattedPipeline = formatPipelineDisplay(totalPipelineValue);
 
   return (
     <div className="space-y-6 font-sans">
@@ -176,7 +215,7 @@ export const DashboardView: React.FC = () => {
           <p className="text-3xl font-black text-blue-600 font-display">
             {totalActiveCount}
           </p>
-          <p className="text-[10px] text-slate-400 mt-1">{projectLeads.length} Projects · {secondaryLeads.length} Secondary</p>
+          <p className="text-[10px] text-slate-400 mt-1">{customTables.length} Custom Tables · {customRows.length} Leads</p>
         </div>
 
         {/* Pipeline Value */}
@@ -238,28 +277,6 @@ export const DashboardView: React.FC = () => {
           >
             Due Today ({dueTodayCount})
           </button>
-
-          <button
-            onClick={() => setActiveFilter('projects')}
-            className={`px-3 py-1 text-xs font-semibold rounded transition-all cursor-pointer ${
-              activeFilter === 'projects'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            Projects
-          </button>
-
-          <button
-            onClick={() => setActiveFilter('secondary')}
-            className={`px-3 py-1 text-xs font-semibold rounded transition-all cursor-pointer ${
-              activeFilter === 'secondary'
-                ? 'bg-purple-600 text-white shadow-xs'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            Secondary
-          </button>
         </div>
       </div>
 
@@ -274,24 +291,25 @@ export const DashboardView: React.FC = () => {
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               {searchQuery 
                 ? 'No follow-up matches your search query.'
-                : 'All scheduled client touchpoints are up to date. Open any spreadsheet to manage your leads or add new rows directly.'}
+                : 'All scheduled client touchpoints are up to date. Open any table to manage your leads or add new rows directly.'}
             </p>
           </div>
           
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <button
-              onClick={() => setActiveTab('project_leads')}
-              className="px-4 py-2 rounded bg-[#0B1B32] text-white text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Open Project Spreadsheet ({projectLeads.length} rows)</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('secondary_leads')}
-              className="px-4 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-all border border-slate-200 cursor-pointer"
-            >
-              <span>Open Buyers / Sellers Spreadsheet ({secondaryLeads.length} rows)</span>
-            </button>
+            {customTables.length > 0 ? (
+              customTables.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  className="px-4 py-2 rounded bg-[#0B1B32] text-white text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer hover:bg-[#152945]"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Open {t.name} ({customRows.filter((r) => r.tableId === t.id).length} rows)</span>
+                </button>
+              ))
+            ) : (
+              <p className="text-xs text-slate-400">Use "+ Add Table" in the top bar to create your first table.</p>
+            )}
           </div>
         </div>
       ) : (
@@ -328,12 +346,22 @@ export const DashboardView: React.FC = () => {
                         </h4>
                         
                         <span className="px-2 py-0.5 bg-slate-100 text-[10px] rounded text-slate-600 uppercase font-semibold border border-slate-200">
-                          {item.sourceType === 'project' ? 'Project Lead' : 'Secondary Market'}
+                          {item.propertyName || 'Custom Table'}
                         </span>
 
                         {item.budgetFormatted && (
                           <span className="px-2 py-0.5 bg-amber-50 text-[10px] rounded text-amber-800 font-bold border border-amber-200">
                             {item.budgetFormatted}
+                          </span>
+                        )}
+
+                        {item.status && (
+                          <span className={`px-2 py-0.5 text-[10px] rounded font-bold border ${
+                            item.status === 'Hot' ? 'bg-red-50 text-red-700 border-red-200' :
+                            item.status === 'Closed Won' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}>
+                            {item.status === 'Hot' ? '🔥 Hot' : item.status}
                           </span>
                         )}
                       </div>

@@ -1,4 +1,16 @@
-export type CallStatus = 'New' | 'Contacted' | 'Follow-up' | 'Not Interested' | 'Closed';
+export type CallStatus = 'New' | 'Contacted' | 'Hot' | 'Follow-up' | 'Under Negotiation' | 'Closed Won' | 'Closed Lost' | 'Closed' | 'Not Interested';
+
+export type CustomTableStatus = 
+  | 'New' 
+  | 'Active' 
+  | 'Hot' 
+  | 'Follow-up' 
+  | 'Interested' 
+  | 'Under Negotiation' 
+  | 'Closed Won' 
+  | 'Closed Lost' 
+  | 'Closed' 
+  | 'Not Interested';
 
 export type PropertyType = 'Apartment' | 'Townhouse' | 'Villa' | 'Penthouse' | 'Duplex';
 
@@ -7,9 +19,12 @@ export type ClientType = 'Buyer' | 'Seller';
 export type SecondaryStatus = 
   | 'New Lead'
   | 'Active Follow-up'
+  | 'Hot'
   | 'Viewing Scheduled'
   | 'Offer Submitted'
   | 'Under Negotiation'
+  | 'Closed Won'
+  | 'Closed Lost'
   | 'Deal Closed'
   | 'Not Interested'
   | 'Lost';
@@ -55,8 +70,9 @@ export interface CustomTableColumn {
   id: string;
   key: string;
   name: string;
-  type: 'text' | 'number' | 'date' | 'tel' | 'select';
+  type: 'text' | 'number' | 'aed' | 'date' | 'tel' | 'select';
   options?: string[];
+  isLeadValue?: boolean;
 }
 
 export interface CustomTable {
@@ -64,6 +80,7 @@ export interface CustomTable {
   name: string;
   description?: string;
   columns: CustomTableColumn[];
+  userEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,6 +89,7 @@ export interface CustomTableRow {
   id: string;
   tableId: string;
   data: Record<string, any>;
+  userEmail?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,12 +98,12 @@ export type ActiveTab = 'dashboard' | 'project_leads' | 'secondary_leads' | stri
 
 export interface ActionItem {
   id: string;
-  sourceType: 'project' | 'secondary';
+  sourceType: 'project' | 'secondary' | 'custom';
   leadId: string;
   clientName: string;
   contactNo: string;
   propertyName: string;
-  subtitle: string; // e.g. "Emaar · Downtown Dubai" or "Buyer · Sidra Villa"
+  subtitle: string; // e.g. "Table: XYZ" or "Emaar · Downtown Dubai"
   details: string;
   status: string;
   followUpDate: string;
@@ -95,5 +113,5 @@ export interface ActionItem {
   isOverdue: boolean;
   isToday: boolean;
   daysDifference: number; // 0 = today, negative = overdue, positive = future
-  rawLead: ProjectLead | SecondaryLead;
+  rawLead: ProjectLead | SecondaryLead | CustomTableRow | any;
 }

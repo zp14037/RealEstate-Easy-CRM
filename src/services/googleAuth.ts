@@ -91,13 +91,53 @@ export async function signInWithGoogle(): Promise<{ token: string; user: GoogleU
   await waitForGoogleGsi();
 
   return new Promise((resolve, reject) => {
+    let isSettled = false;
+
+    // Safety net: detect when user returns focus to main window without completing login
+    const handleWindowFocus = () => {
+      // Delay to allow successful OAuth callback to execute first if it just completed
+      setTimeout(() => {
+        if (!isSettled) {
+          if (!getStoredAccessToken()) {
+            isSettled = true;
+            window.removeEventListener('focus', handleWindowFocus);
+            clearTimeout(timeoutId);
+            reject(new Error('popup_closed'));
+          }
+        }
+      }, 1200);
+    };
+
+    // Safety timeout (45 seconds)
+    const timeoutId = setTimeout(() => {
+      if (!isSettled) {
+        isSettled = true;
+        window.removeEventListener('focus', handleWindowFocus);
+        reject(new Error('popup_closed'));
+      }
+    }, 45000);
+
+    window.addEventListener('focus', handleWindowFocus);
+
+    const cleanup = () => {
+      isSettled = true;
+      window.removeEventListener('focus', handleWindowFocus);
+      clearTimeout(timeoutId);
+    };
+
     try {
       const google = (window as any).google;
 
       tokenClientInstance = google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: GOOGLE_SCOPES,
+        error_callback: (errorResponse: any) => {
+          cleanup();
+          reject(new Error(errorResponse?.type || errorResponse?.message || 'popup_closed'));
+        },
         callback: async (tokenResponse: any) => {
+          cleanup();
+
           if (tokenResponse.error) {
             reject(new Error(tokenResponse.error_description || tokenResponse.error));
             return;
@@ -141,6 +181,7 @@ export async function signInWithGoogle(): Promise<{ token: string; user: GoogleU
       // Prompt account selection
       tokenClientInstance.requestAccessToken({ prompt: 'consent' });
     } catch (err) {
+      cleanup();
       reject(err);
     }
   });

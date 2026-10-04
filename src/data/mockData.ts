@@ -10,11 +10,27 @@ export function formatDate(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export function parseDateSafe(dateString?: string): Date {
+  if (!dateString) return new Date();
+  const clean = String(dateString).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const [y, m, d] = clean.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  if (/^\d{2}-\d{2}-\d{4}$/.test(clean)) {
+    const [d, m, y] = clean.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  const parsed = new Date(clean);
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 /**
- * Get date with offset in days or months
+ * Get date with offset in days or months.
+ * If baseDate is provided, offsets from that date cumulatively!
  */
-export function getDateOffset(days = 0, months = 0): string {
-  const d = new Date();
+export function getDateOffset(days = 0, months = 0, baseDate?: string): string {
+  const d = baseDate ? parseDateSafe(baseDate) : new Date();
   if (months !== 0) {
     d.setMonth(d.getMonth() + months);
   }
@@ -366,18 +382,38 @@ export const DUBAI_COMMUNITIES = [
 export const CALL_STATUS_OPTIONS: { label: string; value: ProjectLead['callStatus']; color: string; bg: string }[] = [
   { label: 'New', value: 'New', color: 'text-sky-300', bg: 'bg-sky-500/15 border-sky-500/30' },
   { label: 'Contacted', value: 'Contacted', color: 'text-blue-300', bg: 'bg-blue-500/15 border-blue-500/30' },
+  { label: '🔥 Hot', value: 'Hot', color: 'text-red-400 font-bold', bg: 'bg-red-500/15 border-red-500/30' },
   { label: 'Follow-up', value: 'Follow-up', color: 'text-amber-300', bg: 'bg-amber-500/15 border-amber-500/30' },
-  { label: 'Not Interested', value: 'Not Interested', color: 'text-slate-400', bg: 'bg-slate-700/50 border-slate-600/40' },
+  { label: 'Under Negotiation', value: 'Under Negotiation', color: 'text-orange-300', bg: 'bg-orange-500/15 border-orange-500/30' },
+  { label: '🏆 Closed Won', value: 'Closed Won', color: 'text-emerald-300 font-bold', bg: 'bg-emerald-500/15 border-emerald-500/30' },
+  { label: '❌ Closed Lost', value: 'Closed Lost', color: 'text-slate-400', bg: 'bg-slate-700/50 border-slate-600/40' },
   { label: 'Closed', value: 'Closed', color: 'text-emerald-300', bg: 'bg-emerald-500/15 border-emerald-500/30' },
+  { label: 'Not Interested', value: 'Not Interested', color: 'text-slate-400', bg: 'bg-slate-700/50 border-slate-600/40' },
 ];
 
 export const SECONDARY_STATUS_OPTIONS: { label: string; value: SecondaryLead['remarksStatus']; color: string; bg: string }[] = [
   { label: 'New Lead', value: 'New Lead', color: 'text-sky-300', bg: 'bg-sky-500/15 border-sky-500/30' },
   { label: 'Active Follow-up', value: 'Active Follow-up', color: 'text-amber-300', bg: 'bg-amber-500/15 border-amber-500/30' },
+  { label: '🔥 Hot', value: 'Hot', color: 'text-red-400 font-bold', bg: 'bg-red-500/15 border-red-500/30' },
   { label: 'Viewing Scheduled', value: 'Viewing Scheduled', color: 'text-indigo-300', bg: 'bg-indigo-500/15 border-indigo-500/30' },
   { label: 'Offer Submitted', value: 'Offer Submitted', color: 'text-purple-300', bg: 'bg-purple-500/15 border-purple-500/30' },
   { label: 'Under Negotiation', value: 'Under Negotiation', color: 'text-orange-300', bg: 'bg-orange-500/15 border-orange-500/30' },
+  { label: '🏆 Closed Won', value: 'Closed Won', color: 'text-emerald-300 font-bold', bg: 'bg-emerald-500/15 border-emerald-500/30' },
+  { label: '❌ Closed Lost', value: 'Closed Lost', color: 'text-slate-400', bg: 'bg-slate-700/50 border-slate-600/40' },
   { label: 'Deal Closed', value: 'Deal Closed', color: 'text-emerald-300', bg: 'bg-emerald-500/15 border-emerald-500/30' },
   { label: 'Not Interested', value: 'Not Interested', color: 'text-slate-400', bg: 'bg-slate-700/50 border-slate-600/40' },
   { label: 'Lost', value: 'Lost', color: 'text-rose-400', bg: 'bg-rose-500/15 border-rose-500/30' },
+];
+
+export const CUSTOM_STATUS_OPTIONS = [
+  { label: 'New', value: 'New', color: 'text-sky-400' },
+  { label: 'Active', value: 'Active', color: 'text-blue-500' },
+  { label: 'Hot', value: 'Hot', color: 'text-red-500' },
+  { label: 'Follow-up', value: 'Follow-up', color: 'text-amber-500' },
+  { label: 'Interested', value: 'Interested', color: 'text-indigo-500' },
+  { label: 'Under Negotiation', value: 'Under Negotiation', color: 'text-orange-500' },
+  { label: 'Closed Won', value: 'Closed Won', color: 'text-emerald-600' },
+  { label: 'Closed Lost', value: 'Closed Lost', color: 'text-slate-500' },
+  { label: 'Closed', value: 'Closed', color: 'text-emerald-500' },
+  { label: 'Not Interested', value: 'Not Interested', color: 'text-slate-400' },
 ];

@@ -5,13 +5,12 @@ import {
   CheckCircle2, 
   X, 
   Sparkles, 
-  HelpCircle, 
   Download, 
-  FileText, 
   ClipboardPaste,
   AlertCircle
 } from 'lucide-react';
-import { ProjectLead } from '../types';
+import { CustomTable, ProjectLead } from '../types';
+import { useCrm } from '../context/CrmContext';
 import { getTodayDateString } from '../data/mockData';
 import { 
   parseSpreadsheetText, 
@@ -23,29 +22,23 @@ import {
 interface ExcelPasteDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  targetSheet: 'project' | 'secondary';
-  onImportProjects: (leads: Partial<ProjectLead>[]) => void;
+  targetTable?: CustomTable;
+  onImportCustomRows?: (tableId: string, rows: Record<string, any>[]) => void;
+  targetSheet?: 'project' | 'secondary' | 'custom';
+  onImportProjects?: (leads: Partial<ProjectLead>[]) => void;
   onImportSecondary?: (leads: any[]) => void;
 }
-
-const PROJECT_COLUMNS: { key: keyof ProjectLead; name: string }[] = [
-  { key: 'ownerName', name: 'Client / Owner Name' },
-  { key: 'contactNo', name: 'Contact Phone / Mobile' },
-  { key: 'projectName', name: 'Project / Property Name' },
-  { key: 'developer', name: 'Developer (e.g. Emaar, Sobha)' },
-  { key: 'community', name: 'Community / Location' },
-  { key: 'unitDetails', name: 'Unit Details (e.g. 2BR, 1350 sqft)' },
-  { key: 'propertyType', name: 'Property Type' },
-  { key: 'budgetAED', name: 'Budget (AED)' },
-  { key: 'handoverDetails', name: 'Handover Date' },
-  { key: 'notes', name: 'Notes / Remarks' },
-];
 
 export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
   isOpen,
   onClose,
+  targetTable,
+  onImportCustomRows,
   onImportProjects,
 }) => {
+  const { customTables, activeTab, bulkAddCustomTableRows } = useCrm();
+
+  const [selectedTableId, setSelectedTableId] = useState<string>('');
   const [activeMode, setActiveMode] = useState<'upload' | 'paste'>('upload');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [rawText, setRawText] = useState('');
@@ -57,7 +50,29 @@ export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset when closed or opened
+  // Sync selected table whenever modal opens or active table/prop changes
+  useEffect(() => {
+    if (isOpen) {
+      if (targetTable) {
+        setSelectedTableId(targetTable.id);
+      } else {
+        const found = customTables.find((t) => t.id === activeTab) || customTables[0];
+        if (found) {
+          setSelectedTableId(found.id);
+        }
+      }
+    }
+  }, [isOpen, targetTable, activeTab, customTables]);
+
+  const activeCustomTable = useMemo(() => {
+    return (
+      customTables.find((t) => t.id === selectedTableId) ||
+      targetTable ||
+      customTables[0]
+    );
+  }, [selectedTableId, targetTable, customTables]);
+
+  // Reset file/text state when closed or opened
   useEffect(() => {
     if (!isOpen) {
       setUploadedFile(null);
@@ -65,6 +80,7 @@ export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
       setParsedMatrix([]);
       setParseError(null);
       setColumnMappings({});
+      setIsParsing(false);
     }
   }, [isOpen]);
 
@@ -83,40 +99,46 @@ export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
     return Math.max(...parsedMatrix.map((r) => r.length));
   }, [parsedMatrix]);
 
-  // Auto-detect column mappings whenever parsedMatrix changes
+  // Auto-detect column mappings whenever parsedMatrix or active table changes
   useEffect(() => {
     if (parsedMatrix.length === 0) {
       setColumnMappings({});
       return;
     }
 
+    const availableColumns = activeCustomTable ? activeCustomTable.columns : [];
     const firstRow = parsedMatrix[0] || [];
-    const targets = PROJECT_COLUMNS.map((c) => ({ key: c.key as string, name: c.name }));
+    const targets = availableColumns.map((c) => ({ key: c.key, name: c.name }));
 
     // Detect if first row looks like a header
     const looksLikeHeader = firstRow.some((val) => {
-      const v = val.toLowerCase();
-      return /name|phone|contact|mobile|budget|price|status|date|notes|project|developer|community|unit|id/i.test(v);
+      const v = val.toLowerCase().trim();
+      return (
+        /name|phone|contact|mobile|budget|price|status|date|notes|remark|email|address|lead/i.test(v) ||
+        targets.some((t) => t.name.toLowerCase() === v || t.key.toLowerCase() === v)
+      );
     });
     setHasHeaderRow(looksLikeHeader);
 
     const newMappings: Record<number, string> = {};
     for (let cIdx = 0; cIdx < detectedColCount; cIdx++) {
       const headerTitle = firstRow[cIdx] || '';
-      const sampleValues = parsedMatrix.slice(looksLikeHeader ? 1 : 0, 4).map((r) => r[cIdx] || '');
+      const sampleValues = parsedMatrix
+        .slice(looksLikeHeader ? 1 : 0, 4)
+        .map((r) => r[cIdx] || '');
       const guessed = guessColumnMapping(headerTitle, sampleValues, targets);
 
       if (guessed) {
         newMappings[cIdx] = guessed;
-      } else if (PROJECT_COLUMNS[cIdx]) {
-        newMappings[cIdx] = PROJECT_COLUMNS[cIdx].key as string;
+      } else if (availableColumns[cIdx]) {
+        newMappings[cIdx] = availableColumns[cIdx].key;
       } else {
         newMappings[cIdx] = 'SKIP';
       }
     }
 
     setColumnMappings(newMappings);
-  }, [parsedMatrix, detectedColCount]);
+  }, [parsedMatrix, detectedColCount, activeCustomTable]);
 
   // File Upload Handler
   const handleFileSelected = async (file: File) => {
@@ -149,103 +171,246 @@ export const ExcelPasteDrawer: React.FC<ExcelPasteDrawerProps> = ({
     }
   };
 
+  // Download Excel template containing ONLY this created table's columns
   const handleDownloadTemplate = () => {
-    const headers = PROJECT_COLUMNS.map((c) => c.name);
-    const sample = [
-      [
-        'Saeed Al-Ghamdi',
-        '+971 50 123 4567',
-        'Skyline Horizon',
-        'Emaar Properties',
-        'Dubai Marina',
-        '2BR High Floor',
-        'Apartment',
-        '4500000',
-        'Q4 2026',
-        'Interested in high floor sea view',
-      ],
-      [
-        'Maria Gonzalez',
-        '+971 55 987 6543',
-        'Parkside Views',
-        'Sobha Realty',
-        'MBR City',
-        '3BR Villa',
-        'Villa',
-        '8200000',
-        'Q2 2027',
-        'Requested payment plan breakdown',
-      ],
+    if (!activeCustomTable || activeCustomTable.columns.length === 0) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'Please create a table with columns first before downloading a template.', isError: true },
+        })
+      );
+      return;
+    }
+
+    // ONLY the columns created in this table
+    const headers = activeCustomTable.columns.map((c) => c.name);
+
+    // Realistic sample rows tailored to each column's type
+    const sampleRows = [
+      activeCustomTable.columns.map((col) => {
+        const lowerName = col.name.toLowerCase();
+        if (col.type === 'tel' || lowerName.includes('phone') || lowerName.includes('mobile') || lowerName.includes('contact')) {
+          return '+971 50 123 4567';
+        }
+        if (col.type === 'aed' || lowerName.includes('budget') || lowerName.includes('price') || lowerName.includes('value')) {
+          return '2500000';
+        }
+        if (col.type === 'number') {
+          return '150';
+        }
+        if (col.type === 'select') {
+          return col.options && col.options.length > 0 ? col.options[0] : 'Active';
+        }
+        if (col.type === 'date' || lowerName.includes('date')) {
+          return getTodayDateString();
+        }
+        if (lowerName.includes('name') || lowerName.includes('client') || lowerName.includes('owner')) {
+          return 'Ahmed Al-Mansoori';
+        }
+        if (lowerName.includes('email')) {
+          return 'ahmed@example.com';
+        }
+        if (lowerName.includes('project') || lowerName.includes('property') || lowerName.includes('building')) {
+          return 'Downtown Heights';
+        }
+        if (lowerName.includes('note') || lowerName.includes('remark')) {
+          return 'Interested in 2BR unit, requested brochure';
+        }
+        return `Sample ${col.name}`;
+      }),
+      activeCustomTable.columns.map((col) => {
+        const lowerName = col.name.toLowerCase();
+        if (col.type === 'tel' || lowerName.includes('phone') || lowerName.includes('mobile') || lowerName.includes('contact')) {
+          return '+971 55 987 6543';
+        }
+        if (col.type === 'aed' || lowerName.includes('budget') || lowerName.includes('price') || lowerName.includes('value')) {
+          return '4200000';
+        }
+        if (col.type === 'number') {
+          return '300';
+        }
+        if (col.type === 'select') {
+          return col.options && col.options.length > 1 ? col.options[1] : (col.options?.[0] || 'Follow-up');
+        }
+        if (col.type === 'date' || lowerName.includes('date')) {
+          return getTodayDateString();
+        }
+        if (lowerName.includes('name') || lowerName.includes('client') || lowerName.includes('owner')) {
+          return 'Sarah Jenkins';
+        }
+        if (lowerName.includes('email')) {
+          return 'sarah@example.com';
+        }
+        if (lowerName.includes('project') || lowerName.includes('property') || lowerName.includes('building')) {
+          return 'Marina Bay Residences';
+        }
+        if (lowerName.includes('note') || lowerName.includes('remark')) {
+          return 'Requested payment plan breakdown';
+        }
+        return `Sample ${col.name} 2`;
+      }),
     ];
-    downloadExcelTemplate('Dubai_Project_Leads_Template.xlsx', headers, sample);
+
+    const safeName = activeCustomTable.name.replace(/[^a-zA-Z0-9_\-]/g, '_');
+    downloadExcelTemplate(`${safeName}_Template.xlsx`, headers, sampleRows);
   };
 
+  // Bulk Apply Import
   const handleApplyImport = () => {
     if (parsedMatrix.length === 0) return;
 
-    const startRow = hasHeaderRow ? 1 : 0;
-    const results: Partial<ProjectLead>[] = [];
+    if (activeCustomTable) {
+      const startRow = hasHeaderRow ? 1 : 0;
+      const newRowsData: Record<string, any>[] = [];
 
-    for (let r = startRow; r < parsedMatrix.length; r++) {
-      const cells = parsedMatrix[r];
-      if (!cells || cells.every((c) => !c.trim())) continue;
+      for (let r = startRow; r < parsedMatrix.length; r++) {
+        const cells = parsedMatrix[r];
+        if (!cells || cells.every((c) => !c || !c.trim())) continue;
 
-      const lead: Partial<ProjectLead> = {
-        projectName: 'Off-Plan Project',
-        developer: 'Emaar Properties',
-        community: 'Dubai',
-        unitDetails: '',
-        propertyType: 'Apartment',
-        handoverDetails: 'Q4 2026',
-        visitedDate: getTodayDateString(),
-        ownerName: 'New Lead',
-        contactNo: '',
-        callStatus: 'New',
-        followUpDate: '',
-        followUpTime: '10:00',
-        budgetAED: 0,
-        notes: '',
-      };
+        const rowData: Record<string, any> = {};
 
-      Object.entries(columnMappings).forEach(([colIdxStr, targetKey]: [string, string]) => {
-        const colIdx = Number(colIdxStr);
-        if (targetKey === 'SKIP') return;
+        // 1. Initialize default values based on table's defined columns
+        activeCustomTable.columns.forEach((col) => {
+          if (col.type === 'date') {
+            rowData[col.key] = getTodayDateString();
+            rowData[`${col.key}_time`] = '10:00';
+          } else if (col.type === 'number' || col.type === 'aed') {
+            rowData[col.key] = 0;
+          } else if (col.type === 'select') {
+            rowData[col.key] = col.options?.[0] || 'New';
+          } else {
+            rowData[col.key] = '';
+          }
+        });
 
-        const val = cells[colIdx] !== undefined ? cells[colIdx].trim() : '';
-        if (targetKey === 'budgetAED') {
-          const num = parseFloat(val.replace(/[^0-9.-]/g, ''));
-          lead.budgetAED = isNaN(num) ? 0 : num;
-        } else if (targetKey === 'propertyType') {
-          lead.propertyType = (val as any) || 'Apartment';
+        // 2. Map cells into corresponding columns
+        Object.entries(columnMappings).forEach(([colIdxStr, targetColKey]) => {
+          const colIdx = Number(colIdxStr);
+          if (targetColKey === 'SKIP') return;
+
+          const rawVal = cells[colIdx] !== undefined ? cells[colIdx].trim() : '';
+          const targetCol = activeCustomTable.columns.find((c) => c.key === targetColKey);
+
+          if (targetCol) {
+            if (targetCol.type === 'number' || targetCol.type === 'aed') {
+              const num = parseFloat(rawVal.replace(/[^0-9.-]/g, ''));
+              rowData[targetColKey] = isNaN(num) ? 0 : num;
+            } else {
+              rowData[targetColKey] = rawVal;
+            }
+          }
+        });
+
+        newRowsData.push(rowData);
+      }
+
+      if (newRowsData.length > 0) {
+        if (onImportCustomRows) {
+          onImportCustomRows(activeCustomTable.id, newRowsData);
         } else {
-          (lead as Record<string, any>)[targetKey] = val;
+          bulkAddCustomTableRows(activeCustomTable.id, newRowsData);
         }
-      });
 
-      results.push(lead);
+        onClose();
+        window.dispatchEvent(
+          new CustomEvent('crm-show-toast', {
+            detail: { msg: `Successfully imported ${newRowsData.length} leads into "${activeCustomTable.name}"!` },
+          })
+        );
+      }
+      return;
     }
 
-    if (results.length > 0) {
-      onImportProjects(results);
-      onClose();
-      window.dispatchEvent(
-        new CustomEvent('crm-show-toast', {
-          detail: { msg: `Successfully imported ${results.length} project leads from Excel!` },
-        })
-      );
+    // Fallback if legacy project leads handler is passed
+    if (onImportProjects) {
+      const startRow = hasHeaderRow ? 1 : 0;
+      const results: Partial<ProjectLead>[] = [];
+
+      for (let r = startRow; r < parsedMatrix.length; r++) {
+        const cells = parsedMatrix[r];
+        if (!cells || cells.every((c) => !c.trim())) continue;
+
+        const lead: Partial<ProjectLead> = {
+          projectName: 'Off-Plan Project',
+          developer: 'Developer',
+          community: 'Dubai',
+          unitDetails: '',
+          propertyType: 'Apartment',
+          handoverDetails: 'Q4 2026',
+          visitedDate: getTodayDateString(),
+          ownerName: 'New Lead',
+          contactNo: '',
+          callStatus: 'New',
+          followUpDate: '',
+          followUpTime: '10:00',
+          budgetAED: 0,
+          notes: '',
+        };
+
+        Object.entries(columnMappings).forEach(([colIdxStr, targetKey]: [string, string]) => {
+          const colIdx = Number(colIdxStr);
+          if (targetKey === 'SKIP') return;
+
+          const val = cells[colIdx] !== undefined ? cells[colIdx].trim() : '';
+          if (targetKey === 'budgetAED') {
+            const num = parseFloat(val.replace(/[^0-9.-]/g, ''));
+            lead.budgetAED = isNaN(num) ? 0 : num;
+          } else if (targetKey === 'propertyType') {
+            lead.propertyType = (val as any) || 'Apartment';
+          } else {
+            (lead as Record<string, any>)[targetKey] = val;
+          }
+        });
+
+        results.push(lead);
+      }
+
+      if (results.length > 0) {
+        onImportProjects(results);
+        onClose();
+        window.dispatchEvent(
+          new CustomEvent('crm-show-toast', {
+            detail: { msg: `Successfully imported ${results.length} project leads from Excel!` },
+          })
+        );
+      }
     }
   };
 
   const loadSampleData = () => {
-    const sample = `Skyline Horizon\tEmaar Properties\tDubai Marina\t2BR High Floor\tApartment\tQ4 2026\t2026-09-24\tSaeed Al-Ghamdi\t+971 50 123 4567\t4500000\tInterested in sea view
-Parkside Views\tSobha Realty\tMBR City\t3BR Villa\tVilla\tQ2 2027\t2026-09-24\tMaria Gonzalez\t+971 55 987 6543\t8200000\tRequested payment plan
-Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 2027\t2026-09-24\tLeonid Volkov\t+971 52 444 3322\t2100000\tImmediate cash buyer`;
-    setRawText(sample);
+    if (!activeCustomTable || activeCustomTable.columns.length === 0) return;
+
+    const sampleSets = [
+      ['Khalid Al-Qasimi', '+971 50 777 8899', '4500000', 'Active', getTodayDateString(), 'High intent buyer, interested in 3BR Palm view'],
+      ['Elena Rostova', '+971 52 333 4455', '2200000', 'Follow-up', getTodayDateString(), 'Requested updated payment plan and floor plans'],
+      ['Marcus Vance', '+971 55 666 1122', '8900000', 'Interested', getTodayDateString(), 'Full floor investor, looking for bulk booking'],
+    ];
+
+    const lines = sampleSets.map((vals) => {
+      return activeCustomTable.columns
+        .map((col, idx) => {
+          const lowerName = col.name.toLowerCase();
+          if (col.type === 'tel' || lowerName.includes('phone') || lowerName.includes('contact')) return vals[1];
+          if (col.type === 'aed' || col.type === 'number' || lowerName.includes('budget') || lowerName.includes('price')) return vals[2];
+          if (col.type === 'select' || lowerName.includes('status')) return (col.options && col.options[0]) || vals[3];
+          if (col.type === 'date' || lowerName.includes('date')) return vals[4];
+          if (lowerName.includes('name') || lowerName.includes('client')) return vals[0];
+          return vals[idx] || vals[5] || `Sample ${col.name}`;
+        })
+        .join('\t');
+    });
+
+    setRawText(lines.join('\n'));
   };
 
   if (!isOpen) return null;
 
-  const validRowCount = parsedMatrix.length > 0 ? (hasHeaderRow ? Math.max(0, parsedMatrix.length - 1) : parsedMatrix.length) : 0;
+  const validRowCount =
+    parsedMatrix.length > 0
+      ? hasHeaderRow
+        ? Math.max(0, parsedMatrix.length - 1)
+        : parsedMatrix.length
+      : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#0B1B32]/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
@@ -268,9 +433,31 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
                   .xlsx · .xls · .csv
                 </span>
               </div>
-              <p className="text-xs text-slate-300">
-                Target: <span className="text-[#D4AF37] font-semibold">Project & Off-Plan Leads</span>
-              </p>
+              <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-300">
+                <span>Target:</span>
+                {customTables.length > 1 ? (
+                  <select
+                    value={selectedTableId}
+                    onChange={(e) => {
+                      setSelectedTableId(e.target.value);
+                      setColumnMappings({});
+                    }}
+                    className="bg-[#152945] text-[#D4AF37] font-semibold text-xs rounded px-2 py-0.5 border border-[#D4AF37]/50 focus:outline-none cursor-pointer"
+                  >
+                    {customTables.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.columns.length} columns)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-[#D4AF37] font-semibold">
+                    {activeCustomTable
+                      ? `${activeCustomTable.name} (${activeCustomTable.columns.length} columns)`
+                      : 'No Custom Table Available'}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           
@@ -278,7 +465,7 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
             <button
               onClick={handleDownloadTemplate}
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-all cursor-pointer"
-              title="Download Excel Starter Template"
+              title={`Download template containing only ${activeCustomTable?.name || 'this table'}'s columns`}
             >
               <Download className="w-3.5 h-3.5 text-[#D4AF37]" />
               <span>Download Excel Template</span>
@@ -323,7 +510,7 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
 
           <button
             onClick={handleDownloadTemplate}
-            className="sm:hidden text-xs text-[#0B1B32] font-semibold flex items-center gap-1 underline mb-2"
+            className="sm:hidden text-xs text-[#0B1B32] font-semibold flex items-center gap-1 underline mb-2 cursor-pointer"
           >
             <Download className="w-3 h-3" /> Template
           </button>
@@ -331,6 +518,32 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-4 text-xs text-slate-700 flex-1">
+          {/* Target Columns Summary Pill */}
+          {activeCustomTable && (
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="font-bold text-amber-950">
+                  Target Table: <span className="underline">{activeCustomTable.name}</span> ({activeCustomTable.columns.length} columns)
+                </p>
+                <span className="text-[11px] text-amber-800 font-medium">
+                  Downloaded template will contain ONLY these columns
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {activeCustomTable.columns.map((c, i) => (
+                  <span
+                    key={c.id}
+                    className="px-2 py-0.5 rounded bg-white border border-amber-300 text-[11px] font-mono text-slate-800 font-semibold shadow-2xs"
+                  >
+                    <span className="text-amber-600 mr-1">{String.fromCharCode(65 + (i % 26))}.</span>
+                    {c.name}
+                    {c.type === 'aed' && <span className="ml-1 text-[10px] text-emerald-700 font-bold">(AED)</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Mode 1: File Drag & Drop */}
           {activeMode === 'upload' && (
             <div className="space-y-3">
@@ -424,7 +637,7 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="font-bold uppercase tracking-wider text-[11px] text-slate-600">
-                  Paste Raw Cells from Excel / Sheets:
+                  Paste Raw Cells from Excel / Google Sheets:
                 </label>
                 <button
                   type="button"
@@ -432,7 +645,7 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
                   className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer underline flex items-center gap-1"
                 >
                   <Sparkles className="w-3 h-3 text-[#D4AF37]" />
-                  Auto-Fill Sample Excel Rows
+                  Auto-Fill Sample Rows
                 </button>
               </div>
               
@@ -446,7 +659,7 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
             </div>
           )}
 
-          {/* Column Mapping Section (Only appears when data is loaded) */}
+          {/* Column Mapping Section (Appears when data is loaded) */}
           {parsedMatrix.length > 0 && (
             <div className="space-y-3 pt-3 border-t border-slate-200">
               <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
@@ -460,13 +673,13 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
                     onChange={(e) => setHasHeaderRow(e.target.checked)}
                     className="rounded text-[#0B1B32] focus:ring-0"
                   />
-                  <span>First row contains headers (do not insert as lead)</span>
+                  <span>First row contains headers (do not insert as data row)</span>
                 </label>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Map Excel Columns to CRM Lead Fields:
+                  Map Excel Columns to Table Columns:
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                   {Array.from({ length: detectedColCount }).map((_, cIdx) => {
@@ -502,9 +715,9 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
                           }`}
                         >
                           <option value="SKIP">❌ Skip / Do Not Import</option>
-                          {PROJECT_COLUMNS.map((col) => (
-                            <option key={col.key as string} value={col.key as string}>
-                              ➔ {col.name}
+                          {activeCustomTable?.columns.map((col) => (
+                            <option key={col.id} value={col.key}>
+                              ➔ {col.name} ({col.type === 'aed' ? 'AED' : col.type})
                             </option>
                           ))}
                         </select>
@@ -515,60 +728,54 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
               </div>
 
               {/* Live Preview Table */}
-              <div>
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  Live Preview (First 3 Rows):
-                </p>
-                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-40">
-                  <table className="w-full text-left text-[11px]">
-                    <thead className="bg-[#0B1B32] text-white">
-                      <tr>
-                        <th className="p-2 w-8 text-center font-mono">#</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Client / Owner</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Contact No.</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Project</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Developer</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Unit</th>
-                        <th className="p-2 font-bold whitespace-nowrap">Budget AED</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                      {parsedMatrix.slice(hasHeaderRow ? 1 : 0, (hasHeaderRow ? 1 : 0) + 3).map((r, rIdx) => {
-                        const getVal = (key: string) => {
-                          const cIdx = Object.keys(columnMappings).find((k) => columnMappings[Number(k)] === key);
-                          return cIdx !== undefined ? r[Number(cIdx)] : '';
-                        };
+              {activeCustomTable && (
+                <div>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Live Preview (First 3 Rows):
+                  </p>
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-40">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-[#0B1B32] text-white">
+                        <tr>
+                          <th className="p-2 w-8 text-center font-mono">#</th>
+                          {activeCustomTable.columns.map((col) => (
+                            <th key={col.id} className="p-2 font-bold whitespace-nowrap">
+                              {col.name}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {parsedMatrix
+                          .slice(hasHeaderRow ? 1 : 0, (hasHeaderRow ? 1 : 0) + 3)
+                          .map((r, rIdx) => (
+                            <tr key={rIdx} className="hover:bg-slate-50">
+                              <td className="p-2 text-center text-slate-400 font-mono text-[10px] bg-slate-50">
+                                {rIdx + 1}
+                              </td>
+                              {activeCustomTable.columns.map((col) => {
+                                const mappedColIdx = Object.keys(columnMappings).find(
+                                  (k) => columnMappings[Number(k)] === col.key
+                                );
+                                const val =
+                                  mappedColIdx !== undefined ? r[Number(mappedColIdx)] : '';
 
-                        return (
-                          <tr key={rIdx} className="hover:bg-slate-50">
-                            <td className="p-2 text-center text-slate-400 font-mono text-[10px] bg-slate-50">
-                              {rIdx + 1}
-                            </td>
-                            <td className="p-2 font-bold text-slate-800 whitespace-nowrap">
-                              {getVal('ownerName') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                            <td className="p-2 font-mono text-slate-600 whitespace-nowrap">
-                              {getVal('contactNo') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                            <td className="p-2 text-slate-700 whitespace-nowrap">
-                              {getVal('projectName') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                            <td className="p-2 text-slate-700 whitespace-nowrap">
-                              {getVal('developer') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                            <td className="p-2 text-slate-700 whitespace-nowrap">
-                              {getVal('unitDetails') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                            <td className="p-2 text-slate-700 font-mono whitespace-nowrap">
-                              {getVal('budgetAED') || <span className="text-slate-300 italic">empty</span>}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                return (
+                                  <td
+                                    key={col.id}
+                                    className="p-2 text-slate-700 whitespace-nowrap max-w-[150px] truncate"
+                                  >
+                                    {val || <span className="text-slate-300 italic">empty</span>}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -595,7 +802,9 @@ Creek Gate\tEmaar Properties\tDubai Creek Harbour\t1BR Corner\tApartment\tQ1 202
             }`}
           >
             <CheckCircle2 className="w-4 h-4 text-[#D4AF37]" />
-            <span>Import {validRowCount} Leads from Excel</span>
+            <span>
+              Import {validRowCount} Leads into {activeCustomTable?.name || 'Table'}
+            </span>
           </button>
         </div>
 

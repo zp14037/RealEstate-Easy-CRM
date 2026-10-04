@@ -68,9 +68,15 @@ export const SecondaryLeadsView: React.FC = () => {
     }));
   };
 
-  // Quick Preset Helper for Follow-up Date column
+  // Quick Preset Helper for Follow-up Date column (Cumulative)
   const handleQuickPresetDate = (id: string, days: number, months: number) => {
-    const nextDate = getDateOffset(days, months);
+    if (days === 0 && months === 0) {
+      updateSecondaryLead(id, { followUpDate: getTodayDateString() });
+      return;
+    }
+    const lead = secondaryLeads.find((s) => s.id === id);
+    const currentDate = lead?.followUpDate ? String(lead.followUpDate).trim() : '';
+    const nextDate = getDateOffset(days, months, currentDate || undefined);
     updateSecondaryLead(id, { followUpDate: nextDate });
   };
 

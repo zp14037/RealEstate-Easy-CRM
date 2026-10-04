@@ -25,6 +25,12 @@ export const GoogleAuthButton: React.FC = () => {
   }, []);
 
   const handleLogin = async () => {
+    // If user clicks while loading, allow resetting
+    if (loading) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await signInWithGoogle();
@@ -34,10 +40,15 @@ export const GoogleAuthButton: React.FC = () => {
         detail: { msg: `✅ Connected as ${res.user.name || res.user.email || 'Google User'}! Calendar sync ready.` }
       }));
     } catch (err: any) {
-      console.error('Google Login Error:', err);
-      window.dispatchEvent(new CustomEvent('crm-show-toast', {
-        detail: { msg: `Google Sign-in failed: ${err.message}`, isError: true }
-      }));
+      const errMsg = String(err?.message || '');
+      if (errMsg !== 'popup_closed' && errMsg !== 'popup_failed_to_open') {
+        console.error('Google Login Error:', err);
+        window.dispatchEvent(new CustomEvent('crm-show-toast', {
+          detail: { msg: `Google Sign-in: ${errMsg}`, isError: true }
+        }));
+      } else {
+        console.log('Google Sign-in popup closed or cancelled by user.');
+      }
     } finally {
       setLoading(false);
     }
@@ -104,9 +115,10 @@ export const GoogleAuthButton: React.FC = () => {
   return (
     <button
       onClick={handleLogin}
-      disabled={loading}
-      className="flex items-center gap-2 px-3 py-2 rounded-md bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 hover:border-slate-400 text-xs font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-60"
-      title="Sign in with Google to enable automatic background calendar sync"
+      className={`flex items-center gap-2 px-3 py-2 rounded-md bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 hover:border-slate-400 text-xs font-semibold shadow-xs transition-all cursor-pointer ${
+        loading ? 'ring-1 ring-amber-400' : ''
+      }`}
+      title={loading ? 'Signing in... (Click to cancel)' : 'Sign in with Google to enable automatic background calendar sync'}
     >
       {/* Official Google G Logo */}
       <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24">

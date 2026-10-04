@@ -15,13 +15,15 @@ import {
   ChevronDown,
   ClipboardPaste,
   FileSpreadsheet,
-  LogOut
+  LogOut,
+  Lock
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { ActiveTab } from '../types';
 import { ExcelPasteDrawer } from './ExcelPasteDrawer';
 import { GoogleAuthButton } from './GoogleAuthButton';
 import { AddTableModal } from './AddTableModal';
+import { getStoredAccessToken, getStoredGoogleUser } from '../services/googleAuth';
 
 interface HeaderNavProps {
   onLogout?: () => void;
@@ -38,6 +40,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
     projectLeads, 
     customTables,
     addCustomTable,
+    bulkAddCustomTableRows,
     bulkAddProjectLeads,
     exportToCsv,
     searchQuery,
@@ -47,6 +50,18 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isBulkPasteOpen, setIsBulkPasteOpen] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
+  const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(() => {
+    return !!getStoredAccessToken() && !!getStoredGoogleUser();
+  });
+
+  React.useEffect(() => {
+    const handleAuthChange = (e: any) => {
+      setIsGoogleConnected(!!e.detail?.loggedIn && !!e.detail?.user);
+    };
+
+    window.addEventListener('crm-google-auth-changed', handleAuthChange);
+    return () => window.removeEventListener('crm-google-auth-changed', handleAuthChange);
+  }, []);
 
   // Today's formatted date
   const todayFormatted = new Intl.DateTimeFormat('en-GB', {
@@ -58,16 +73,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
 
   // Title for current view
   const getTabTitle = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return "Today's Action Feed";
-      case 'project_leads':
-        return 'Project & Off-Plan Leads (Spreadsheet)';
-      default: {
-        const found = customTables.find((t) => t.id === activeTab);
-        return found ? `${found.name} (Spreadsheet)` : 'Custom Spreadsheet';
-      }
+    if (activeTab === 'dashboard') {
+      return "Today's Action Feed";
     }
+    const found = customTables.find((t) => t.id === activeTab);
+    return found ? `${found.name} (Spreadsheet)` : 'Custom Spreadsheet';
   };
 
   return (
@@ -116,7 +126,18 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
 
         {/* Bulk Import from Excel Button */}
         <button
-          onClick={() => setIsBulkPasteOpen(true)}
+          onClick={() => {
+            if (customTables.length === 0) {
+              window.dispatchEvent(
+                new CustomEvent('crm-show-toast', {
+                  detail: { msg: 'Please create a table first using "+ Add Table" before importing data.', isError: true }
+                })
+              );
+              setIsAddTableOpen(true);
+              return;
+            }
+            setIsBulkPasteOpen(true);
+          }}
           className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
           title="Import leads from Excel spreadsheet (.xlsx, .xls, .csv)"
         >
@@ -151,30 +172,46 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
                 <CheckCircle2 className="w-3.5 h-3.5 text-[#D4AF37]" />
                 Export Today's Actions CSV
               </button>
-              <button
-                onClick={() => {
-                  exportToCsv('project');
-                  setShowExportMenu(false);
-                }}
-                className="w-full text-left px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
-              >
-                <Layers className="w-3.5 h-3.5 text-blue-600" />
-                Export Project Leads CSV
-              </button>
             </div>
           )}
         </div>
 
         {/* "+ Add Table" Button */}
-        <button
-          id="global-add-table-btn"
-          onClick={() => setIsAddTableOpen(true)}
-          className="bg-[#0B1B32] text-white px-3 sm:px-4 py-2 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 hover:bg-[#152945] transition-colors shadow-xs cursor-pointer border border-[#D4AF37]/40"
-          title="Create a new custom table with defined columns"
-        >
-          <Plus className="w-4 h-4 stroke-[3] text-[#D4AF37]" />
-          <span>+ Add Table</span>
-        </button>
+        <div className="relative group">
+          <button
+            id="global-add-table-btn"
+            disabled={!isGoogleConnected}
+            onClick={() => {
+              if (!isGoogleConnected) {
+                window.dispatchEvent(
+                  new CustomEvent('crm-show-toast', {
+                    detail: { msg: '🔒 Please Sign In with Google first to enable creating custom tables.', isError: true }
+                  })
+                );
+                return;
+              }
+              setIsAddTableOpen(true);
+            }}
+            className={`px-3 sm:px-4 py-2 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all border ${
+              isGoogleConnected
+                ? 'bg-[#0B1B32] text-white hover:bg-[#152945] cursor-pointer border-[#D4AF37]/40 shadow-xs'
+                : 'bg-slate-100 text-slate-400 border-slate-300 cursor-not-allowed opacity-75'
+            }`}
+            title={isGoogleConnected ? "Create a new custom table with defined columns" : "Sign in with Google to enable creating custom tables"}
+          >
+            {isGoogleConnected ? (
+              <Plus className="w-4 h-4 stroke-[3] text-[#D4AF37]" />
+            ) : (
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span>+ Add Table</span>
+          </button>
+          {!isGoogleConnected && (
+            <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block bg-slate-900 text-white text-[11px] px-2.5 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none">
+              🔒 Sign in with Google to enable table creation
+            </div>
+          )}
+        </div>
 
         {/* User Profile & Logout */}
         {onLogout && (
@@ -200,9 +237,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({ onLogout, currentUser = 'z
       <ExcelPasteDrawer
         isOpen={isBulkPasteOpen}
         onClose={() => setIsBulkPasteOpen(false)}
-        targetSheet="project"
-        onImportProjects={bulkAddProjectLeads}
-        onImportSecondary={() => {}}
+        targetTable={customTables.find((t) => t.id === activeTab) || customTables[0]}
+        onImportCustomRows={bulkAddCustomTableRows}
       />
 
       {/* Create Table Modal */}

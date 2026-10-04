@@ -1,10 +1,9 @@
--- ==============================================================================
--- Supabase Schema for Xpotential Real Estate CRM
--- Run this script in the Supabase SQL Editor (https://supabase.com/dashboard/project/_/sql)
--- ==============================================================================
+-- ============================================================
+-- Xpotential Real Estate CRM - Safe Supabase Schema
+-- ============================================================
 
--- 1. Create Project Leads Table (Off-Plan CRM Spreadsheet)
-CREATE TABLE IF NOT EXISTS project_leads (
+-- 1. PROJECT LEADS
+CREATE TABLE IF NOT EXISTS public.project_leads (
   id TEXT PRIMARY KEY,
   "projectName" TEXT DEFAULT '',
   developer TEXT DEFAULT '',
@@ -24,8 +23,9 @@ CREATE TABLE IF NOT EXISTS project_leads (
   "updatedAt" TIMESTAMPTZ DEFAULT now()
 );
 
--- 2. Create Secondary Leads Table (Buyers & Sellers CRM Spreadsheet)
-CREATE TABLE IF NOT EXISTS secondary_leads (
+
+-- 2. SECONDARY LEADS
+CREATE TABLE IF NOT EXISTS public.secondary_leads (
   id TEXT PRIMARY KEY,
   name TEXT DEFAULT '',
   mobile TEXT DEFAULT '',
@@ -42,57 +42,168 @@ CREATE TABLE IF NOT EXISTS secondary_leads (
   "updatedAt" TIMESTAMPTZ DEFAULT now()
 );
 
--- 3. Enable Row Level Security (RLS) with open CRUD policies for web app
-ALTER TABLE project_leads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE secondary_leads ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public access on project_leads" ON project_leads;
-CREATE POLICY "Public access on project_leads" ON project_leads
-  FOR ALL
-  TO anon, authenticated
-  USING (true)
-  WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Public access on secondary_leads" ON secondary_leads;
-CREATE POLICY "Public access on secondary_leads" ON secondary_leads
-  FOR ALL
-  TO anon, authenticated
-  USING (true)
-  WITH CHECK (true);
-
--- 4. Enable Realtime subscriptions so all connected devices update live
-ALTER PUBLICATION supabase_realtime ADD TABLE project_leads;
-ALTER PUBLICATION supabase_realtime ADD TABLE secondary_leads;
-
--- 5. Create Custom Tables & Dynamic Rows (User Defined Tables)
-CREATE TABLE IF NOT EXISTS custom_tables (
+-- 3. CUSTOM TABLES
+CREATE TABLE IF NOT EXISTS public.custom_tables (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
   columns JSONB DEFAULT '[]'::jsonb,
+  "userEmail" TEXT DEFAULT '',
   "createdAt" TIMESTAMPTZ DEFAULT now(),
   "updatedAt" TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS custom_table_rows (
+
+-- 4. CUSTOM TABLE ROWS
+CREATE TABLE IF NOT EXISTS public.custom_table_rows (
   id TEXT PRIMARY KEY,
   "tableId" TEXT NOT NULL,
   data JSONB DEFAULT '{}'::jsonb,
+  "userEmail" TEXT DEFAULT '',
   "createdAt" TIMESTAMPTZ DEFAULT now(),
   "updatedAt" TIMESTAMPTZ DEFAULT now()
 );
 
-ALTER TABLE custom_tables ENABLE ROW LEVEL SECURITY;
-ALTER TABLE custom_table_rows ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public access on custom_tables" ON custom_tables;
-CREATE POLICY "Public access on custom_tables" ON custom_tables
-  FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+-- ============================================================
+-- 5. ENABLE RLS
+-- ============================================================
 
-DROP POLICY IF EXISTS "Public access on custom_table_rows" ON custom_table_rows;
-CREATE POLICY "Public access on custom_table_rows" ON custom_table_rows
-  FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+ALTER TABLE public.project_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.secondary_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_tables ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_table_rows ENABLE ROW LEVEL SECURITY;
 
-ALTER PUBLICATION supabase_realtime ADD TABLE custom_tables;
-ALTER PUBLICATION supabase_realtime ADD TABLE custom_table_rows;
 
+-- ============================================================
+-- 6. RLS POLICIES
+-- ============================================================
+
+DROP POLICY IF EXISTS "Public access on project_leads"
+ON public.project_leads;
+
+CREATE POLICY "Public access on project_leads"
+ON public.project_leads
+FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+
+DROP POLICY IF EXISTS "Public access on secondary_leads"
+ON public.secondary_leads;
+
+CREATE POLICY "Public access on secondary_leads"
+ON public.secondary_leads
+FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+
+DROP POLICY IF EXISTS "Public access on custom_tables"
+ON public.custom_tables;
+
+CREATE POLICY "Public access on custom_tables"
+ON public.custom_tables
+FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+
+DROP POLICY IF EXISTS "Public access on custom_table_rows"
+ON public.custom_table_rows;
+
+CREATE POLICY "Public access on custom_table_rows"
+ON public.custom_table_rows
+FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+
+-- ============================================================
+-- 7. ENABLE REALTIME SAFELY
+-- ============================================================
+
+DO $$
+BEGIN
+
+  -- project_leads
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'project_leads'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'project_leads'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime
+    ADD TABLE public.project_leads;
+  END IF;
+
+
+  -- secondary_leads
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'secondary_leads'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'secondary_leads'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime
+    ADD TABLE public.secondary_leads;
+  END IF;
+
+
+  -- custom_tables
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'custom_tables'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'custom_tables'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime
+    ADD TABLE public.custom_tables;
+  END IF;
+
+
+  -- custom_table_rows
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'custom_table_rows'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'custom_table_rows'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime
+    ADD TABLE public.custom_table_rows;
+  END IF;
+
+END $$;

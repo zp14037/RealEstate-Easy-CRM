@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ProjectLead, 
   SecondaryLead, 
@@ -34,9 +34,11 @@ import {
   insertCustomTableRowToDb,
   updateCustomTableRowInDb,
   deleteCustomTableRowFromDb,
+  clearCustomTableRowsFromDb,
   bulkInsertCustomTableRowsToDb
 } from '../services/supabaseDataService';
 import { isSupabaseConfigured, getSupabaseClient } from '../lib/supabaseClient';
+import { getStoredGoogleUser } from '../services/googleAuth';
 
 interface CrmContextType {
   activeTab: ActiveTab;
@@ -79,11 +81,11 @@ interface CrmContextType {
   duplicateSecondaryLead: (id: string) => void;
   
   // Action & Follow-up Handlers
-  rescheduleLead: (sourceType: 'project' | 'secondary', id: string, newDate: string, newStatus?: string, note?: string) => void;
-  quickReschedulePreset: (sourceType: 'project' | 'secondary', id: string, days: number, months: number, note?: string) => void;
-  markDone: (sourceType: 'project' | 'secondary', id: string, note?: string) => void;
-  markClosedDeal: (sourceType: 'project' | 'secondary', id: string, note?: string) => void;
-  markNotInterested: (sourceType: 'project' | 'secondary', id: string, note?: string) => void;
+  rescheduleLead: (sourceType: 'project' | 'secondary' | 'custom', id: string, newDate: string, newStatus?: string, note?: string) => void;
+  quickReschedulePreset: (sourceType: 'project' | 'secondary' | 'custom', id: string, days: number, months: number, note?: string) => void;
+  markDone: (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => void;
+  markClosedDeal: (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => void;
+  markNotInterested: (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => void;
   
   // Management
   clearAllData: () => void;
@@ -98,49 +100,40 @@ const STORAGE_KEY_CUSTOM_ROWS = 'xpotential_crm_custom_rows_v1';
 
 const CrmContext = createContext<CrmContextType | undefined>(undefined);
 
-export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: string }> = ({ 
+  children, 
+  currentUser 
+}) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Real Database state: starts empty, no sample data needed!
   const [projectLeads, setProjectLeads] = useState<ProjectLead[]>([]);
   const [secondaryLeads, setSecondaryLeads] = useState<SecondaryLead[]>([]);
-  const [customTables, setCustomTables] = useState<CustomTable[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_TABLES);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+  
+  // Custom tables strictly scoped to the creator's Google email
+  const [customTables, setCustomTables] = useState<CustomTable[]>([]);
+  const [customRows, setCustomRows] = useState<CustomTableRow[]>([]);
+  const customRowsRef = useRef<CustomTableRow[]>([]);
+  useEffect(() => {
+    customRowsRef.current = customRows;
+  }, [customRows]);
+
+  const [googleEmail, setGoogleEmail] = useState<string>(() => {
+    return (getStoredGoogleUser()?.email || '').trim().toLowerCase();
   });
 
-  const [customRows, setCustomRows] = useState<CustomTableRow[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_ROWS);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  useEffect(() => {
+    const handleAuthChange = (e: any) => {
+      setGoogleEmail((e.detail?.user?.email || '').trim().toLowerCase());
+    };
+    window.addEventListener('crm-google-auth-changed', handleAuthChange);
+    return () => window.removeEventListener('crm-google-auth-changed', handleAuthChange);
+  }, []);
+
+  const effectiveEmail = googleEmail || (currentUser && currentUser.includes('@') ? currentUser.trim().toLowerCase() : '');
 
   const [isDbConnected, setIsDbConnected] = useState<boolean>(() => isSupabaseConfigured());
-
-  // Save to LocalStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_CUSTOM_TABLES, JSON.stringify(customTables));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [customTables]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_CUSTOM_ROWS, JSON.stringify(customRows));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [customRows]);
 
   // Function to refresh leads directly from Supabase
   const refreshFromDb = async () => {
@@ -153,27 +146,28 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const [proj, sec, dbTables] = await Promise.all([
         fetchProjectLeadsFromDb(),
         fetchSecondaryLeadsFromDb(),
-        fetchCustomTablesFromDb(),
+        effectiveEmail ? fetchCustomTablesFromDb(effectiveEmail) : Promise.resolve([]),
       ]);
       setProjectLeads(proj);
       setSecondaryLeads(sec);
 
-      if (dbTables && dbTables.length > 0) {
+      if (effectiveEmail && dbTables && dbTables.length > 0) {
         setCustomTables(dbTables);
         const rowsArrays = await Promise.all(
-          dbTables.map((t: any) => fetchCustomTableRowsFromDb(t.id))
+          dbTables.map((t: any) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))
         );
         const flatRows = rowsArrays.flat();
-        if (flatRows.length > 0) {
-          setCustomRows(flatRows);
-        }
+        setCustomRows(flatRows);
+      } else {
+        setCustomTables([]);
+        setCustomRows([]);
       }
     } catch (e) {
       console.error('Failed to load leads from Supabase:', e);
     }
   };
 
-  // Initial load and listen for config changes
+  // Initial load and listen for config or user changes
   useEffect(() => {
     refreshFromDb();
 
@@ -183,7 +177,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     window.addEventListener('crm-supabase-config-changed', handleConfigChange);
     return () => window.removeEventListener('crm-supabase-config-changed', handleConfigChange);
-  }, []);
+  }, [effectiveEmail]);
 
   // Supabase Realtime synchronization across all tabs and devices
   useEffect(() => {
@@ -195,19 +189,39 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'project_leads' }, () => {
         fetchProjectLeadsFromDb().then((leads) => setProjectLeads(leads));
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'secondary_leads' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'secondary_leads' }, (payload: any) => {
         fetchSecondaryLeadsFromDb().then((leads) => setSecondaryLeads(leads));
+        if (payload?.new?.clientType === 'CUSTOM_TABLE' || payload?.old?.clientType === 'CUSTOM_TABLE') {
+          if (effectiveEmail) {
+            fetchCustomTablesFromDb(effectiveEmail).then((tables) => {
+              setCustomTables(tables || []);
+            });
+          }
+        }
+        if (payload?.new?.clientType === 'CUSTOM_ROW' || payload?.old?.clientType === 'CUSTOM_ROW') {
+          if (effectiveEmail && customTables.length > 0) {
+            Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
+              const flat = arrays.flat();
+              if (flat.length > 0) setCustomRows(flat);
+            });
+          }
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_tables' }, () => {
-        fetchCustomTablesFromDb().then((tables) => {
-          if (tables && tables.length > 0) setCustomTables(tables);
-        });
+        if (effectiveEmail) {
+          fetchCustomTablesFromDb(effectiveEmail).then((tables) => {
+            setCustomTables(tables || []);
+          });
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_table_rows' }, () => {
         // Refresh custom table rows
-        if (customTables.length > 0) {
-          Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id))).then((arrays) => {
-            setCustomRows(arrays.flat());
+        if (effectiveEmail && customTables.length > 0) {
+          Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
+            const flat = arrays.flat();
+            if (flat.length > 0) {
+              setCustomRows(flat);
+            }
           });
         }
       })
@@ -216,7 +230,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       client.removeChannel(channel);
     };
-  }, [isDbConnected, customTables]);
+  }, [isDbConnected, customTables, effectiveEmail]);
 
   // ==========================================================================
   // Dynamic Custom Tables CRUD
@@ -227,11 +241,12 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newTable: CustomTable = {
       ...tableData,
       id: newId,
+      userEmail: effectiveEmail,
       createdAt: getTodayDateString(),
       updatedAt: getTodayDateString(),
     };
     setCustomTables((prev) => [...prev, newTable]);
-    saveCustomTableToDb(newTable);
+    saveCustomTableToDb(newTable, effectiveEmail);
     setActiveTab(newId);
     return newId;
   };
@@ -241,7 +256,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCustomRows((prev) => prev.filter((r) => r.tableId !== tableId));
     deleteCustomTableFromDb(tableId);
     if (activeTab === tableId) {
-      setActiveTab('project_leads');
+      setActiveTab('dashboard');
     }
   };
 
@@ -250,34 +265,39 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newRow: CustomTableRow = {
       id: newId,
       tableId,
+      userEmail: effectiveEmail,
       data,
       createdAt: getTodayDateString(),
       updatedAt: getTodayDateString(),
     };
+    customRowsRef.current = insertAt === 'top' ? [newRow, ...customRowsRef.current] : [...customRowsRef.current, newRow];
     setCustomRows((prev) => (insertAt === 'top' ? [newRow, ...prev] : [...prev, newRow]));
-    insertCustomTableRowToDb(newRow);
+    insertCustomTableRowToDb(newRow, effectiveEmail);
     return newId;
   };
 
   const updateCustomTableRow = (rowId: string, dataUpdates: Record<string, any>) => {
-    let updatedRowData: Record<string, any> = {};
-    setCustomRows((prev) =>
-      prev.map((r) => {
-        if (r.id === rowId) {
-          updatedRowData = { ...r.data, ...dataUpdates };
-          return {
-            ...r,
-            data: updatedRowData,
-            updatedAt: getTodayDateString(),
-          };
-        }
-        return r;
-      })
+    const existingRow = customRowsRef.current.find((r) => r.id === rowId) || customRows.find((r) => r.id === rowId);
+    const updatedRowData = { ...(existingRow?.data || {}), ...dataUpdates };
+
+    // Update in-memory ref immediately so consecutive edits never lose columns
+    customRowsRef.current = customRowsRef.current.map((r) =>
+      r.id === rowId ? { ...r, data: updatedRowData, updatedAt: getTodayDateString() } : r
     );
-    updateCustomTableRowInDb(rowId, updatedRowData);
+
+    // Update state
+    setCustomRows((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, data: updatedRowData, updatedAt: getTodayDateString() } : r))
+    );
+
+    // Save full merged data to Supabase (never empty!)
+    if (Object.keys(updatedRowData).length > 0) {
+      updateCustomTableRowInDb(rowId, updatedRowData);
+    }
   };
 
   const deleteCustomTableRow = (rowId: string) => {
+    customRowsRef.current = customRowsRef.current.filter((r) => r.id !== rowId);
     setCustomRows((prev) => prev.filter((r) => r.id !== rowId));
     deleteCustomTableRowFromDb(rowId);
   };
@@ -289,11 +309,12 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newRow: CustomTableRow = {
       ...existing,
       id: newId,
+      userEmail: effectiveEmail || existing.userEmail || '',
       createdAt: getTodayDateString(),
       updatedAt: getTodayDateString(),
     };
     setCustomRows((prev) => [newRow, ...prev]);
-    insertCustomTableRowToDb(newRow);
+    insertCustomTableRowToDb(newRow, effectiveEmail);
   };
 
   const bulkAddCustomTableRows = (tableId: string, rowsData: Record<string, any>[]): number => {
@@ -301,12 +322,13 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const formatted: CustomTableRow[] = rowsData.map((data, idx) => ({
       id: `row_bulk_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
       tableId,
+      userEmail: effectiveEmail,
       data,
       createdAt: getTodayDateString(),
       updatedAt: getTodayDateString(),
     }));
     setCustomRows((prev) => [...formatted, ...prev]);
-    bulkInsertCustomTableRowsToDb(formatted);
+    bulkInsertCustomTableRowsToDb(formatted, effectiveEmail);
     return formatted.length;
   };
 
@@ -469,12 +491,31 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Direct Reschedule action
   const rescheduleLead = (
-    sourceType: 'project' | 'secondary',
+    sourceType: 'project' | 'secondary' | 'custom',
     id: string,
     newDate: string,
     newStatus?: string,
     note?: string
   ) => {
+    if (sourceType === 'custom') {
+      const row = customRows.find((r) => r.id === id);
+      if (!row) return;
+      const table = customTables.find((t) => t.id === row.tableId);
+      const dateCol = table?.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+      const statusCol = table?.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const noteCol = table?.columns.find((c) => c.name.toLowerCase().includes('note') || c.name.toLowerCase().includes('remark'));
+
+      const updates: Record<string, any> = {};
+      if (dateCol) updates[dateCol.key] = newDate;
+      if (newStatus && statusCol) updates[statusCol.key] = newStatus;
+      if (note && noteCol) {
+        const existing = row.data[noteCol.key];
+        updates[noteCol.key] = existing ? `${existing} | [${getTodayDateString()}]: ${note}` : note;
+      }
+      updateCustomTableRow(id, updates);
+      return;
+    }
+
     if (sourceType === 'project') {
       const existing = projectLeads.find((p) => p.id === id);
       if (!existing) return;
@@ -501,7 +542,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const quickReschedulePreset = (
-    sourceType: 'project' | 'secondary',
+    sourceType: 'project' | 'secondary' | 'custom',
     id: string,
     days: number,
     months: number,
@@ -512,8 +553,28 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Instant 1-Click Done (marks call done and schedules standard next touchpoint +3 days)
-  const markDone = (sourceType: 'project' | 'secondary', id: string, note?: string) => {
+  const markDone = (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => {
     const nextDate = getDateOffset(3);
+    if (sourceType === 'custom') {
+      const row = customRows.find((r) => r.id === id);
+      if (!row) return;
+      const table = customTables.find((t) => t.id === row.tableId);
+      const dateCol = table?.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+      const statusCol = table?.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const noteCol = table?.columns.find((c) => c.name.toLowerCase().includes('note') || c.name.toLowerCase().includes('remark'));
+
+      const updates: Record<string, any> = {};
+      if (dateCol) updates[dateCol.key] = nextDate;
+      if (statusCol) updates[statusCol.key] = 'Follow-up';
+      if (noteCol) {
+        const noteText = note || 'Follow-up call completed. Next touchpoint in 3 days.';
+        const existing = row.data[noteCol.key];
+        updates[noteCol.key] = existing ? `${existing} | [${getTodayDateString()}]: ${noteText}` : noteText;
+      }
+      updateCustomTableRow(id, updates);
+      return;
+    }
+
     if (sourceType === 'project') {
       const existing = projectLeads.find((p) => p.id === id);
       const noteText = note || 'Follow-up call completed. Next touchpoint in 3 days.';
@@ -533,7 +594,25 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const markClosedDeal = (sourceType: 'project' | 'secondary', id: string, note?: string) => {
+  const markClosedDeal = (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => {
+    if (sourceType === 'custom') {
+      const row = customRows.find((r) => r.id === id);
+      if (!row) return;
+      const table = customTables.find((t) => t.id === row.tableId);
+      const statusCol = table?.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const noteCol = table?.columns.find((c) => c.name.toLowerCase().includes('note') || c.name.toLowerCase().includes('remark'));
+
+      const updates: Record<string, any> = {};
+      if (statusCol) updates[statusCol.key] = 'Closed Won';
+      if (noteCol) {
+        const noteText = note ? `Deal Closed! ${note}` : 'Deal Closed & Follow-up Completed';
+        const existing = row.data[noteCol.key];
+        updates[noteCol.key] = existing ? `${existing} | [${getTodayDateString()}]: ${noteText}` : noteText;
+      }
+      updateCustomTableRow(id, updates);
+      return;
+    }
+
     if (sourceType === 'project') {
       updateProjectLead(id, {
         callStatus: 'Closed',
@@ -547,7 +626,12 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const markNotInterested = (sourceType: 'project' | 'secondary', id: string, note?: string) => {
+  const markNotInterested = (sourceType: 'project' | 'secondary' | 'custom', id: string, note?: string) => {
+    if (sourceType === 'custom') {
+      deleteCustomTableRow(id);
+      return;
+    }
+
     if (sourceType === 'project') {
       updateProjectLead(id, {
         callStatus: 'Not Interested',
@@ -576,10 +660,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const clearCustomTableRows = (tableId: string) => {
     setCustomRows((prev) => prev.filter((r) => r.tableId !== tableId));
-    const client = getSupabaseClient();
-    if (client) {
-      client.from('custom_table_rows').delete().eq('tableId', tableId).then();
-    }
+    clearCustomTableRowsFromDb(tableId);
   };
 
   const clearAllData = () => {
@@ -685,74 +766,71 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     document.body.removeChild(link);
   };
 
-  // Compute Action Items for the Core Requirement:
-  // "Filter all leads from both lists where followUpDate <= today's date, AND status is not Closed/Dead"
+  // Compute Action Items:
+  // ONLY show follow-ups scheduled for today / overdue from tables created by the user
   const actionItems: ActionItem[] = useMemo(() => {
     const items: ActionItem[] = [];
 
-    // Filter project leads
-    projectLeads.forEach((p) => {
-      const isDead = p.callStatus === 'Closed' || p.callStatus === 'Not Interested';
-      if (isDead) return;
-      if (!p.followUpDate) return; // Unscheduled leads live in spreadsheet
+    // Custom table leads with scheduled follow-up date & time
+    customTables.forEach((table) => {
+      const dateCol = table.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+      if (!dateCol) return;
 
-      const diff = getDaysDiffFromToday(p.followUpDate);
-      if (diff <= 0) {
-        items.push({
-          id: `act-proj-${p.id}`,
-          sourceType: 'project',
-          leadId: p.id,
-          clientName: p.ownerName || 'Unnamed Lead',
-          contactNo: p.contactNo || 'No Number',
-          propertyName: p.projectName || 'Off-Plan Project',
-          subtitle: `${p.developer || ''} · ${p.community || ''}`,
-          details: p.unitDetails || 'No unit details specified',
-          status: p.callStatus,
-          followUpDate: p.followUpDate,
-          followUpTime: p.followUpTime || '10:00',
-          notes: p.notes,
-          budgetFormatted: p.budgetAED ? formatAED(p.budgetAED) : undefined,
-          isOverdue: diff < 0,
-          isToday: diff === 0,
-          daysDifference: diff,
-          rawLead: p,
-        });
-      }
-    });
+      const nameCol = table.columns.find((c) => c.name.toLowerCase().includes('name') || c.name.toLowerCase().includes('client') || c.name.toLowerCase().includes('owner'));
+      const telCol = table.columns.find((c) => c.type === 'tel' || c.name.toLowerCase().includes('contact') || c.name.toLowerCase().includes('phone') || c.name.toLowerCase().includes('mobile'));
+      const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const noteCol = table.columns.find((c) => c.name.toLowerCase().includes('note') || c.name.toLowerCase().includes('remark'));
+      const budgetCol = table.columns.find((c) => c.type === 'aed' || c.name.toLowerCase().includes('budget') || c.name.toLowerCase().includes('price') || c.name.toLowerCase().includes('aed'));
 
-    // Filter secondary leads
-    secondaryLeads.forEach((s) => {
-      const isDead = s.remarksStatus === 'Deal Closed' || s.remarksStatus === 'Not Interested' || s.remarksStatus === 'Lost';
-      if (isDead) return;
-      if (!s.followUpDate) return; // Unscheduled leads live in spreadsheet
+      const rowsForTable = customRows.filter((r) => r.tableId === table.id);
+      rowsForTable.forEach((row) => {
+        const followUpDate = row.data[dateCol.key];
+        if (!followUpDate || typeof followUpDate !== 'string' || !followUpDate.trim()) return;
 
-      const diff = getDaysDiffFromToday(s.followUpDate);
-      if (diff <= 0) {
-        items.push({
-          id: `act-sec-${s.id}`,
-          sourceType: 'secondary',
-          leadId: s.id,
-          clientName: s.name || 'Unnamed Client',
-          contactNo: s.mobile || 'No Mobile',
-          propertyName: s.property || 'Secondary Property',
-          subtitle: `${s.clientType === 'Buyer' ? '🟢 Buyer' : '🟣 Seller'} · Budget: ${formatAED(s.budget)}`,
-          details: s.expectationRequirements || 'No requirements specified',
-          status: s.remarksStatus,
-          followUpDate: s.followUpDate,
-          followUpTime: s.followUpTime || '10:00',
-          notes: s.notes,
-          budgetFormatted: formatAED(s.budget),
-          isOverdue: diff < 0,
-          isToday: diff === 0,
-          daysDifference: diff,
-          rawLead: s,
-        });
-      }
+        const diff = getDaysDiffFromToday(followUpDate.trim());
+        if (diff <= 0) {
+          const statusVal = statusCol ? row.data[statusCol.key] : 'Active';
+          if (
+            statusVal === 'Closed' || 
+            statusVal === 'Not Interested' || 
+            statusVal === 'Deal Closed' || 
+            statusVal === 'Lost' ||
+            statusVal === 'Closed Won' ||
+            statusVal === 'Closed Lost'
+          ) return;
+
+          const clientName = nameCol ? row.data[nameCol.key] : Object.values(row.data).find(v => typeof v === 'string' && v.trim().length > 0) || 'Lead';
+          const contactNo = telCol ? row.data[telCol.key] : '';
+          const timeVal = row.data[`${dateCol.key}_time`] || '10:00';
+          const noteVal = noteCol ? row.data[noteCol.key] : '';
+          const budgetVal = budgetCol ? row.data[budgetCol.key] : undefined;
+
+          items.push({
+            id: `act-custom-${row.id}`,
+            sourceType: 'custom',
+            leadId: row.id,
+            clientName: String(clientName || 'Lead'),
+            contactNo: String(contactNo || ''),
+            propertyName: table.name,
+            subtitle: `Table: ${table.name}`,
+            details: noteVal ? String(noteVal) : `Scheduled Follow-up in ${table.name}`,
+            status: statusVal as any,
+            followUpDate: followUpDate.trim(),
+            followUpTime: timeVal,
+            notes: noteVal ? String(noteVal) : undefined,
+            budgetFormatted: budgetVal ? formatAED(parseFloat(String(budgetVal).replace(/[^0-9.-]+/g, '')) || 0) : undefined,
+            isOverdue: diff < 0,
+            isToday: diff === 0,
+            daysDifference: diff,
+            rawLead: row as any,
+          });
+        }
+      });
     });
 
     // Sort: Overdue first (most overdue on top), then Today's items
     return items.sort((a, b) => a.daysDifference - b.daysDifference);
-  }, [projectLeads, secondaryLeads]);
+  }, [customTables, customRows]);
 
   // Statistics
   const overdueCount = useMemo(() => actionItems.filter((i) => i.isOverdue).length, [actionItems]);
@@ -760,26 +838,54 @@ export const CrmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const upcomingCount = useMemo(() => {
     let count = 0;
-    projectLeads.forEach((p) => {
-      if (p.callStatus !== 'Closed' && p.callStatus !== 'Not Interested' && p.followUpDate) {
-        const diff = getDaysDiffFromToday(p.followUpDate);
-        if (diff > 0 && diff <= 7) count++;
-      }
-    });
-    secondaryLeads.forEach((s) => {
-      if (s.remarksStatus !== 'Deal Closed' && s.remarksStatus !== 'Not Interested' && s.remarksStatus !== 'Lost' && s.followUpDate) {
-        const diff = getDaysDiffFromToday(s.followUpDate);
-        if (diff > 0 && diff <= 7) count++;
-      }
+    customTables.forEach((table) => {
+      const dateCol = table.columns.find((c) => c.type === 'date' || c.name.toLowerCase().includes('follow') || c.name.toLowerCase().includes('date'));
+      if (!dateCol) return;
+      const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const rows = customRows.filter((r) => r.tableId === table.id);
+      rows.forEach((row) => {
+        const d = row.data[dateCol.key];
+        if (!d || typeof d !== 'string' || !d.trim()) return;
+        const diff = getDaysDiffFromToday(d.trim());
+        if (diff > 0 && diff <= 7) {
+          const s = statusCol ? row.data[statusCol.key] : 'Active';
+          if (
+            s !== 'Closed' && 
+            s !== 'Not Interested' && 
+            s !== 'Deal Closed' && 
+            s !== 'Lost' &&
+            s !== 'Closed Won' &&
+            s !== 'Closed Lost'
+          ) {
+            count++;
+          }
+        }
+      });
     });
     return count;
-  }, [projectLeads, secondaryLeads]);
+  }, [customTables, customRows]);
 
   const totalActiveCount = useMemo(() => {
-    const activeProjects = projectLeads.filter((p) => p.callStatus !== 'Closed' && p.callStatus !== 'Not Interested').length;
-    const activeSecondary = secondaryLeads.filter((s) => s.remarksStatus !== 'Deal Closed' && s.remarksStatus !== 'Not Interested' && s.remarksStatus !== 'Lost').length;
-    return activeProjects + activeSecondary;
-  }, [projectLeads, secondaryLeads]);
+    let count = 0;
+    customTables.forEach((table) => {
+      const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
+      const rows = customRows.filter((r) => r.tableId === table.id);
+      rows.forEach((row) => {
+        const s = statusCol ? row.data[statusCol.key] : 'Active';
+        if (
+          s !== 'Closed' && 
+          s !== 'Not Interested' && 
+          s !== 'Deal Closed' && 
+          s !== 'Lost' &&
+          s !== 'Closed Won' &&
+          s !== 'Closed Lost'
+        ) {
+          count++;
+        }
+      });
+    });
+    return count;
+  }, [customTables, customRows]);
 
   return (
     <CrmContext.Provider

@@ -27,10 +27,17 @@ export const EditableCell: React.FC<EditableCellProps> = ({
   const [currentValue, setCurrentValue] = useState<string>(String(value ?? ''));
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
 
-  // Sync internal state when external value changes
+  // Sync internal state when external value changes ONLY if user is not currently editing
   useEffect(() => {
+    if (!isEditing) {
+      setCurrentValue(String(value ?? ''));
+    }
+  }, [value, isEditing]);
+
+  const startEditing = () => {
     setCurrentValue(String(value ?? ''));
-  }, [value]);
+    setIsEditing(true);
+  };
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -115,9 +122,9 @@ export const EditableCell: React.FC<EditableCellProps> = ({
 
   return (
     <div
-      onClick={() => setIsEditing(true)}
+      onClick={startEditing}
       tabIndex={0}
-      onFocus={() => setIsEditing(true)}
+      onFocus={startEditing}
       className={`w-full h-full min-h-[32px] px-2.5 py-1.5 flex items-center cursor-pointer transition-all hover:bg-amber-50/50 focus:bg-amber-50/70 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] group relative ${className}`}
       title="Click to edit cell inline"
     >

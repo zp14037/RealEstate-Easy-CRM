@@ -78,9 +78,15 @@ export const ProjectLeadsView: React.FC = () => {
     }));
   };
 
-  // Quick Preset Helper for Follow-up Date column
+  // Quick Preset Helper for Follow-up Date column (Cumulative)
   const handleQuickPresetDate = (id: string, days: number, months: number) => {
-    const nextDate = getDateOffset(days, months);
+    if (days === 0 && months === 0) {
+      updateProjectLead(id, { followUpDate: getTodayDateString() });
+      return;
+    }
+    const lead = projectLeads.find((l) => l.id === id);
+    const currentDate = lead?.followUpDate ? String(lead.followUpDate).trim() : '';
+    const nextDate = getDateOffset(days, months, currentDate || undefined);
     updateProjectLead(id, { followUpDate: nextDate });
   };
 
