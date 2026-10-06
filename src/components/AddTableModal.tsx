@@ -6,17 +6,12 @@ import {
   Trash2, 
   Sparkles, 
   Columns3, 
-  Hash, 
-  Calendar, 
-  Phone, 
-  Type, 
+  CheckCircle2, 
+  Lock,
   ListFilter,
-  CheckCircle2,
-  CalendarPlus,
-  Lock
+  Check
 } from 'lucide-react';
 import { CustomTable, CustomTableColumn } from '../types';
-
 import { getStoredAccessToken, getStoredGoogleUser } from '../services/googleAuth';
 
 interface AddTableModalProps {
@@ -30,17 +25,31 @@ interface FormColumn {
   type: CustomTableColumn['type'];
   isDefault?: boolean;
   isLeadValue?: boolean;
+  isCompulsory?: boolean;
 }
 
 const DEFAULT_REQUIRED_COLUMNS: FormColumn[] = [
   { name: 'Client Name', type: 'text' },
   { name: 'Contact Number', type: 'tel' },
   { name: 'Budget AED', type: 'aed', isLeadValue: true },
-  { name: 'First Contacted', type: 'date', isDefault: true },
-  { name: 'Recent Contacted', type: 'date', isDefault: true },
-  { name: 'Status', type: 'select', isDefault: true },
-  { name: 'Follow-up Date & Time', type: 'date', isDefault: true },
+  { name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true },
+  { name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true },
+  { name: 'Status', type: 'select', isDefault: true, isCompulsory: true },
+  { name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true },
   { name: 'Notes', type: 'text' },
+];
+
+const DEFAULT_STATUS_LIST: string[] = [
+  'New',
+  'Active',
+  'Hot',
+  'Follow-up',
+  'Interested',
+  'Under Negotiation',
+  'Closed Won',
+  'Closed Lost',
+  'Closed',
+  'Not Interested',
 ];
 
 export const AddTableModal: React.FC<AddTableModalProps> = ({
@@ -51,9 +60,11 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   const [tableName, setTableName] = useState('');
   const [description, setDescription] = useState('');
   const [quickInput, setQuickInput] = useState('');
-  const [columns, setColumns] = useState<FormColumn[]>(
-    DEFAULT_REQUIRED_COLUMNS
-  );
+  const [columns, setColumns] = useState<FormColumn[]>(DEFAULT_REQUIRED_COLUMNS);
+  const [availableStatusChoices, setAvailableStatusChoices] = useState<string[]>(DEFAULT_STATUS_LIST);
+  const [selectedStatusOptions, setSelectedStatusOptions] = useState<string[]>(DEFAULT_STATUS_LIST);
+  const [customStatusInput, setCustomStatusInput] = useState('');
+
   const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(() => {
     return !!getStoredAccessToken() && !!getStoredGoogleUser();
   });
@@ -69,11 +80,50 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleToggleStatusOption = (status: string) => {
+    setSelectedStatusOptions((prev) => {
+      if (prev.includes(status)) {
+        if (prev.length <= 1) {
+          window.dispatchEvent(
+            new CustomEvent('crm-show-toast', {
+              detail: { msg: 'Status is compulsory: at least one status option must be selected.', isError: true },
+            })
+          );
+          return prev;
+        }
+        return prev.filter((s) => s !== status);
+      } else {
+        return [...prev, status];
+      }
+    });
+  };
+
+  const handleAddCustomStatus = () => {
+    const trimmed = customStatusInput.trim();
+    if (!trimmed) return;
+    if (!availableStatusChoices.includes(trimmed)) {
+      setAvailableStatusChoices((prev) => [...prev, trimmed]);
+    }
+    if (!selectedStatusOptions.includes(trimmed)) {
+      setSelectedStatusOptions((prev) => [...prev, trimmed]);
+    }
+    setCustomStatusInput('');
+  };
+
   const handleAddColumn = () => {
     setColumns((prev) => [...prev, { name: `Column ${prev.length + 1}`, type: 'text' }]);
   };
 
   const handleRemoveColumn = (index: number) => {
+    const col = columns[index];
+    if (col && (col.isCompulsory || col.name.toLowerCase() === 'status')) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: 'This column is compulsory and cannot be removed.', isError: true },
+        })
+      );
+      return;
+    }
     if (columns.length <= 1) return;
     setColumns((prev) => prev.filter((_, i) => i !== index));
   };
@@ -93,7 +143,6 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         return {
           ...col,
           type: newType,
-          // When switching to AED, if no other column is Lead Value, set to true
           isLeadValue: newType === 'aed' ? !alreadyHasLeadValue : false,
         };
       });
@@ -106,7 +155,6 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         if (i === index) {
           return { ...col, isLeadValue: isLead };
         }
-        // Strictly only ONE column in a table can be the lead value!
         if (isLead && col.type === 'aed') {
           return { ...col, isLeadValue: false };
         }
@@ -134,37 +182,39 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         type = 'tel';
       } else if (lower.includes('date') || lower.includes('time') || lower.includes('day')) {
         type = 'date';
-      } else if (lower.includes('aed') || lower.includes('budget') || lower.includes('price') || lower.includes('amount') || lower.includes('cost') || lower.includes('currency')) {
+      } else if (lower.includes('aed') || lower.includes('budget') || lower.includes('price') || lower.includes('amount') || lower.includes('cost')) {
         type = 'aed';
         if (!hasLeadValueAssigned) {
           isLeadValue = true;
           hasLeadValueAssigned = true;
         }
-      } else if (lower.includes('number') || lower.includes('count') || lower.includes('qty') || lower.includes('sqft') || lower.includes('area') || lower.includes('rate')) {
+      } else if (lower.includes('number') || lower.includes('count') || lower.includes('qty') || lower.includes('sqft')) {
         type = 'number';
-      } else if (lower.includes('status') || lower.includes('type') || lower.includes('stage')) {
+      } else if (lower.includes('status') || lower.includes('stage')) {
         type = 'select';
       }
       return { name, type, isLeadValue };
     });
 
-    // Ensure Status is always present
-    const hasStatus = parsedCols.some((c) => c.name.toLowerCase().includes('status') || c.type === 'select');
-    if (!hasStatus) {
-      parsedCols.push({ name: 'Status', type: 'select', isDefault: true });
+    // Ensure compulsory system columns are always preserved
+    if (!parsedCols.some((c) => c.name.toLowerCase().includes('first contact'))) {
+      parsedCols.push({ name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true });
     }
-
-    // Ensure Follow-up Date is always present for Google Calendar scheduling
-    const hasFollowUp = parsedCols.some((c) => c.name.toLowerCase().includes('follow') || c.type === 'date');
-    if (!hasFollowUp) {
-      parsedCols.push({ name: 'Follow-up Date', type: 'date', isDefault: true });
+    if (!parsedCols.some((c) => c.name.toLowerCase().includes('recent contact'))) {
+      parsedCols.push({ name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true });
+    }
+    if (!parsedCols.some((c) => c.name.toLowerCase() === 'status' || c.type === 'select')) {
+      parsedCols.push({ name: 'Status', type: 'select', isDefault: true, isCompulsory: true });
+    }
+    if (!parsedCols.some((c) => c.name.toLowerCase().includes('follow') || c.type === 'date')) {
+      parsedCols.push({ name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true });
     }
 
     setColumns(parsedCols);
     setQuickInput('');
   };
 
-  // Presets
+  // Industry Presets
   const applyPreset = (presetName: string) => {
     if (presetName === 'secondary') {
       setTableName('Buyers & Sellers');
@@ -175,8 +225,10 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Client Type', type: 'select' },
         { name: 'Budget AED', type: 'aed', isLeadValue: true },
         { name: 'Requirements', type: 'text' },
-        { name: 'Status', type: 'select', isDefault: true },
-        { name: 'Follow-up Date', type: 'date', isDefault: true },
+        { name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Status', type: 'select', isDefault: true, isCompulsory: true },
+        { name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true },
         { name: 'Notes', type: 'text' },
       ]);
     } else if (presetName === 'investors') {
@@ -187,8 +239,10 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Target Community', type: 'text' },
         { name: 'Max Budget AED', type: 'aed', isLeadValue: true },
         { name: 'Expected ROI %', type: 'number' },
-        { name: 'Status', type: 'select', isDefault: true },
-        { name: 'Follow-up Date', type: 'date', isDefault: true },
+        { name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Status', type: 'select', isDefault: true, isCompulsory: true },
+        { name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true },
         { name: 'Investment Notes', type: 'text' },
       ]);
     } else if (presetName === 'inventory') {
@@ -200,8 +254,10 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
         { name: 'Size SqFt', type: 'number' },
         { name: 'Selling Price AED', type: 'aed', isLeadValue: true },
         { name: 'Owner Contact', type: 'tel' },
-        { name: 'Status', type: 'select', isDefault: true },
-        { name: 'Follow-up Date', type: 'date', isDefault: true },
+        { name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true },
+        { name: 'Status', type: 'select', isDefault: true, isCompulsory: true },
+        { name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true },
         { name: 'Key Notes', type: 'text' },
       ]);
     }
@@ -224,47 +280,42 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
     let finalColumns = [...columns].filter((c) => c.name.trim().length > 0);
 
     // Guaranteed First Contacted column
-    const hasFirstContacted = finalColumns.some(
-      (c) => c.name.toLowerCase().includes('first contact')
-    );
-    if (!hasFirstContacted) {
-      finalColumns.push({ name: 'First Contacted', type: 'date', isDefault: true });
+    if (!finalColumns.some((c) => c.name.toLowerCase().includes('first contact'))) {
+      finalColumns.push({ name: 'First Contacted', type: 'date', isDefault: true, isCompulsory: true });
     }
 
     // Guaranteed Recent Contacted column
-    const hasRecentContacted = finalColumns.some(
-      (c) => c.name.toLowerCase().includes('recent contact')
-    );
-    if (!hasRecentContacted) {
-      finalColumns.push({ name: 'Recent Contacted', type: 'date', isDefault: true });
+    if (!finalColumns.some((c) => c.name.toLowerCase().includes('recent contact'))) {
+      finalColumns.push({ name: 'Recent Contacted', type: 'date', isDefault: true, isCompulsory: true });
     }
 
-    // Guaranteed Status column by default
-    const hasStatus = finalColumns.some(
-      (c) => c.name.toLowerCase() === 'status' || c.type === 'select'
-    );
-    if (!hasStatus) {
-      finalColumns.push({ name: 'Status', type: 'select', isDefault: true });
+    // Guaranteed Compulsory Status column
+    if (!finalColumns.some((c) => c.name.toLowerCase() === 'status' || c.type === 'select')) {
+      finalColumns.push({ name: 'Status', type: 'select', isDefault: true, isCompulsory: true });
     }
 
-    // Guaranteed Follow-up Date column by default for Google Calendar
-    const hasFollowUpDate = finalColumns.some(
-      (c) => c.name.toLowerCase().includes('follow') || c.type === 'date'
-    );
-    if (!hasFollowUpDate) {
-      finalColumns.push({ name: 'Follow-up Date & Time', type: 'date', isDefault: true });
+    // Guaranteed Follow-up Date column
+    if (!finalColumns.some((c) => c.name.toLowerCase().includes('follow') || c.type === 'date')) {
+      finalColumns.push({ name: 'Follow-up Date & Time', type: 'date', isDefault: true, isCompulsory: true });
     }
 
-    const cleanColumns: CustomTableColumn[] = finalColumns.map((c, idx) => ({
-      id: `col_${Date.now()}_${idx}`,
-      key: `col_${c.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${idx}`,
-      name: c.name.trim(),
-      type: c.type,
-      isLeadValue: c.type === 'aed' ? Boolean(c.isLeadValue) : false,
-      options: c.type === 'select' || c.name.toLowerCase().includes('status')
-        ? ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed', 'Not Interested']
-        : undefined,
-    }));
+    // Strictly assign user's selected status options to the Status column
+    const effectiveStatusOptions =
+      selectedStatusOptions.length > 0
+        ? selectedStatusOptions
+        : ['New', 'Active', 'Hot', 'Closed Won'];
+
+    const cleanColumns: CustomTableColumn[] = finalColumns.map((c, idx) => {
+      const isStatusCol = c.name.toLowerCase() === 'status' || c.type === 'select';
+      return {
+        id: `col_${Date.now()}_${idx}`,
+        key: `col_${c.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${idx}`,
+        name: c.name.trim(),
+        type: c.type,
+        isLeadValue: c.type === 'aed' ? Boolean(c.isLeadValue) : false,
+        options: isStatusCol ? effectiveStatusOptions : undefined,
+      };
+    });
 
     onCreateTable({
       name: cleanTableName,
@@ -278,7 +329,7 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div 
-        className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
+        className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -292,59 +343,33 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
                 Create New Table
               </h3>
               <p className="text-xs text-slate-300">
-                Define your custom columns, spreadsheet layout, and Excel bulk import rules
+                Define your custom columns, compulsory status options, and Google-isolated table
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5 text-xs text-slate-700 flex-1">
-          {/* Calendar Notice Banner */}
-          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200/80 flex items-start gap-2.5">
-            <CalendarPlus className="w-4 h-4 text-[#D4AF37] shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold text-[#0B1B32]">
-                Google Calendar & Pipeline Sync Active
-              </p>
-              <p className="text-slate-600 mt-0.5">
-                Every table includes <strong className="text-slate-900">"Status"</strong> and <strong className="text-slate-900">"Follow-up Date"</strong> by default. This enables instant 1-click scheduling to your Google Calendar and tracking in Today's Action Feed.
-              </p>
-            </div>
-          </div>
-
-          {/* Google Sign-in Requirement Notice */}
-          {!isGoogleConnected && (
-            <div className="p-3 bg-red-50 rounded-lg border border-red-200 flex items-start gap-2.5 text-red-900">
-              <Lock className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-red-900">Google Sign-In Required</p>
-                <p className="text-red-700 mt-0.5 text-[11px]">
-                  You must be signed in with Google to create tables so they are saved to your account and synced across your devices.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Table Name & Description */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {/* Table Identity */}
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                Table Name *
+                Table Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 required
-                placeholder="e.g. VIP Investors, Buyers & Sellers, Commercial Leads"
+                placeholder="e.g. Palm Jumeirah Luxury Villas, Off-Plan Investors"
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0B1B32] focus:bg-white font-medium"
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0B1B32] focus:bg-white font-semibold text-slate-800"
               />
             </div>
 
@@ -441,14 +466,14 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
               {columns.map((col, idx) => {
                 const isLockedColumn =
+                  col.isCompulsory ||
                   col.name.toLowerCase() === 'status' ||
                   col.name.toLowerCase().includes('follow') ||
                   col.name.toLowerCase().includes('first contact') ||
-                  col.name.toLowerCase().includes('recent contact') ||
-                  col.isDefault;
+                  col.name.toLowerCase().includes('recent contact');
 
                 return (
                   <div
@@ -531,11 +556,11 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
 
                     {isLockedColumn ? (
                       <span
-                        className="p-1.5 text-amber-700 bg-amber-100 border border-amber-300 rounded text-[10px] font-bold flex items-center gap-1 select-none shrink-0"
-                        title="Default system column: type and deletion are locked"
+                        className="p-1 px-2 text-amber-800 bg-amber-100 border border-amber-300 rounded text-[10px] font-bold flex items-center gap-1 select-none shrink-0"
+                        title="Compulsory column: type and deletion are locked"
                       >
-                        <Lock className="w-3 h-3" />
-                        <span className="hidden sm:inline">Locked</span>
+                        <Lock className="w-3 h-3 text-amber-700" />
+                        <span>Compulsory</span>
                       </span>
                     ) : (
                       <button
@@ -555,6 +580,99 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Compulsory Status Column Options Configurator */}
+          <div className="pt-3 border-t border-slate-200">
+            <div className="p-3.5 bg-gradient-to-br from-amber-50/70 to-orange-50/30 rounded-xl border border-amber-300/80 shadow-2xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-1 rounded bg-[#0B1B32] text-[#D4AF37]">
+                    <ListFilter className="w-3.5 h-3.5" />
+                  </span>
+                  <div>
+                    <span className="text-xs font-bold text-[#0B1B32] uppercase tracking-wider">
+                      Status Column Options (Compulsory)
+                    </span>
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#0B1B32] text-[#D4AF37]">
+                      {selectedStatusOptions.length} active in table
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStatusOptions([...availableStatusChoices])}
+                    className="text-[#0B1B32] font-bold hover:underline cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStatusOptions(['New', 'Active', 'Hot', 'Closed Won'])}
+                    className="text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
+                  >
+                    Popular Only
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-600">
+                Click any status to enable/disable it. <strong>Only the statuses you select here will go into this table during creation.</strong>
+              </p>
+
+              {/* Status choice pills */}
+              <div className="flex flex-wrap gap-1.5">
+                {availableStatusChoices.map((st) => {
+                  const isSelected = selectedStatusOptions.includes(st);
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => handleToggleStatusOption(st)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        isSelected
+                          ? 'bg-[#0B1B32] text-white border-[#0B1B32] shadow-xs'
+                          : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600'
+                      }`}
+                    >
+                      {isSelected ? (
+                        <Check className="w-3.5 h-3.5 text-[#D4AF37] stroke-[3]" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      <span>{st}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Add Custom Status */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  placeholder="Add custom status (e.g. Site Visit, Offer Submitted)..."
+                  value={customStatusInput}
+                  onChange={(e) => setCustomStatusInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomStatus();
+                    }
+                  }}
+                  className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-[#0B1B32]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCustomStatus}
+                  className="px-3 py-1.5 bg-[#0B1B32] hover:bg-[#152945] text-white rounded-md text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>Add Status</span>
+                </button>
+              </div>
             </div>
           </div>
         </form>

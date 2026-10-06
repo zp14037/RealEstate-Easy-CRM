@@ -152,13 +152,25 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
       setSecondaryLeads(sec);
 
       if (effectiveEmail && dbTables && dbTables.length > 0) {
-        setCustomTables(dbTables);
-        const rowsArrays = await Promise.all(
-          dbTables.map((t: any) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))
+        const filteredTables = dbTables.filter(
+          (t: any) => (t.userEmail || '').trim().toLowerCase() === effectiveEmail
         );
-        const flatRows = rowsArrays.flat();
-        setCustomRows(flatRows);
+        setCustomTables(filteredTables);
+        if (filteredTables.length > 0) {
+          const rowsArrays = await Promise.all(
+            filteredTables.map((t: any) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))
+          );
+          const flatRows = rowsArrays.flat().filter(
+            (r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail
+          );
+          customRowsRef.current = flatRows;
+          setCustomRows(flatRows);
+        } else {
+          customRowsRef.current = [];
+          setCustomRows([]);
+        }
       } else {
+        customRowsRef.current = [];
         setCustomTables([]);
         setCustomRows([]);
       }
@@ -194,15 +206,17 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
         if (payload?.new?.clientType === 'CUSTOM_TABLE' || payload?.old?.clientType === 'CUSTOM_TABLE') {
           if (effectiveEmail) {
             fetchCustomTablesFromDb(effectiveEmail).then((tables) => {
-              setCustomTables(tables || []);
+              const filtered = (tables || []).filter((t: any) => (t.userEmail || '').trim().toLowerCase() === effectiveEmail);
+              setCustomTables(filtered);
             });
           }
         }
         if (payload?.new?.clientType === 'CUSTOM_ROW' || payload?.old?.clientType === 'CUSTOM_ROW') {
           if (effectiveEmail && customTables.length > 0) {
             Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
-              const flat = arrays.flat();
-              if (flat.length > 0) setCustomRows(flat);
+              const flat = arrays.flat().filter((r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail);
+              customRowsRef.current = flat;
+              setCustomRows(flat);
             });
           }
         }
@@ -210,7 +224,8 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
       .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_tables' }, () => {
         if (effectiveEmail) {
           fetchCustomTablesFromDb(effectiveEmail).then((tables) => {
-            setCustomTables(tables || []);
+            const filtered = (tables || []).filter((t: any) => (t.userEmail || '').trim().toLowerCase() === effectiveEmail);
+            setCustomTables(filtered);
           });
         }
       })
@@ -218,10 +233,9 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
         // Refresh custom table rows
         if (effectiveEmail && customTables.length > 0) {
           Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
-            const flat = arrays.flat();
-            if (flat.length > 0) {
-              setCustomRows(flat);
-            }
+            const flat = arrays.flat().filter((r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail);
+            customRowsRef.current = flat;
+            setCustomRows(flat);
           });
         }
       })
@@ -237,6 +251,14 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
   // ==========================================================================
 
   const addCustomTable = (tableData: Omit<CustomTable, 'id' | 'createdAt' | 'updatedAt'>): string => {
+    if (!effectiveEmail) {
+      window.dispatchEvent(
+        new CustomEvent('crm-show-toast', {
+          detail: { msg: '🔒 Please sign in with Google to create and view custom tables.', isError: true },
+        })
+      );
+      return '';
+    }
     const newId = `table_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
     const newTable: CustomTable = {
       ...tableData,
@@ -327,6 +349,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
       createdAt: getTodayDateString(),
       updatedAt: getTodayDateString(),
     }));
+    customRowsRef.current = [...formatted, ...customRowsRef.current];
     setCustomRows((prev) => [...formatted, ...prev]);
     bulkInsertCustomTableRowsToDb(formatted, effectiveEmail);
     return formatted.length;

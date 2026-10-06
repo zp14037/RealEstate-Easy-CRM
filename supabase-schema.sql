@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS public.custom_table_rows (
 );
 
 
+-- Indexes for high-performance and strict per-user Google ID isolation
+CREATE INDEX IF NOT EXISTS idx_custom_tables_userEmail ON public.custom_tables ("userEmail");
+CREATE INDEX IF NOT EXISTS idx_custom_table_rows_userEmail ON public.custom_table_rows ("userEmail");
+CREATE INDEX IF NOT EXISTS idx_custom_table_rows_tableId ON public.custom_table_rows ("tableId");
+
+
 -- ============================================================
 -- 5. ENABLE RLS
 -- ============================================================

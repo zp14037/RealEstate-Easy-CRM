@@ -151,7 +151,7 @@ export async function fetchCustomTablesFromDb(userEmail?: string): Promise<any[]
 
   const cleanEmail = (userEmail || '').trim().toLowerCase();
   if (!cleanEmail) {
-    // Strictly private: tables are only visible to the user who created them
+    // Strictly private: tables are only visible to the user who created them with their Google sign-in ID
     return [];
   }
 
@@ -160,8 +160,8 @@ export async function fetchCustomTablesFromDb(userEmail?: string): Promise<any[]
     const query = client.from('custom_tables').select('*').eq('userEmail', cleanEmail);
     const { data, error } = await query.order('createdAt', { ascending: true });
 
-    if (!error && data && data.length > 0) {
-      return data;
+    if (!error && data) {
+      return data.filter((t: any) => (t.userEmail || '').trim().toLowerCase() === cleanEmail);
     }
   } catch (e) {
     // Fall through to fallback
@@ -177,30 +177,32 @@ export async function fetchCustomTablesFromDb(userEmail?: string): Promise<any[]
 
     const { data: fbData, error: fbError } = await fallbackQuery.order('createdAt', { ascending: true });
     if (!fbError && fbData) {
-      return fbData.map((rec) => {
-        try {
-          const parsed = JSON.parse(rec.notes || '{}');
-          return {
-            id: rec.id.replace('__ctable_', ''),
-            name: rec.name,
-            description: rec.expectationRequirements || '',
-            columns: parsed.columns || [],
-            userEmail: rec.property || '',
-            createdAt: rec.createdAt,
-            updatedAt: rec.updatedAt,
-          };
-        } catch {
-          return {
-            id: rec.id.replace('__ctable_', ''),
-            name: rec.name,
-            description: '',
-            columns: [],
-            userEmail: rec.property || '',
-            createdAt: rec.createdAt,
-            updatedAt: rec.updatedAt,
-          };
-        }
-      });
+      return fbData
+        .map((rec) => {
+          try {
+            const parsed = JSON.parse(rec.notes || '{}');
+            return {
+              id: rec.id.replace('__ctable_', ''),
+              name: rec.name,
+              description: rec.expectationRequirements || '',
+              columns: parsed.columns || [],
+              userEmail: rec.property || '',
+              createdAt: rec.createdAt,
+              updatedAt: rec.updatedAt,
+            };
+          } catch {
+            return {
+              id: rec.id.replace('__ctable_', ''),
+              name: rec.name,
+              description: '',
+              columns: [],
+              userEmail: rec.property || '',
+              createdAt: rec.createdAt,
+              updatedAt: rec.updatedAt,
+            };
+          }
+        })
+        .filter((t) => (t.userEmail || '').trim().toLowerCase() === cleanEmail);
     }
   } catch (e) {
     console.warn('Fallback custom_tables fetch error:', e);
@@ -269,11 +271,19 @@ export async function fetchCustomTableRowsFromDb(tableId: string, userEmail?: st
   const client = getSupabaseClient();
   if (!client) return [];
 
+  const cleanEmail = (userEmail || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    // Strictly private: rows are only visible to the user with their Google sign-in email
+    return [];
+  }
+
   // 1. Try dedicated custom_table_rows table
   try {
-    let query = client.from('custom_table_rows').select('*').eq('tableId', tableId);
+    let query = client.from('custom_table_rows').select('*').eq('tableId', tableId).eq('userEmail', cleanEmail);
     const { data, error } = await query.order('createdAt', { ascending: false });
-    if (!error && data && data.length > 0) return data;
+    if (!error && data) {
+      return data.filter((r: any) => (r.userEmail || '').trim().toLowerCase() === cleanEmail);
+    }
   } catch {}
 
   // 2. Fallback to secondary_leads
@@ -283,31 +293,34 @@ export async function fetchCustomTableRowsFromDb(tableId: string, userEmail?: st
       .select('*')
       .eq('clientType', 'CUSTOM_ROW')
       .eq('property', tableId)
+      .eq('remarksStatus', cleanEmail)
       .order('createdAt', { ascending: false });
 
     if (!error && data) {
-      return data.map((rec) => {
-        try {
-          const parsed = JSON.parse(rec.notes || '{}');
-          return {
-            id: rec.id.replace('__crow_', ''),
-            tableId: rec.property,
-            data: parsed.data || (rec.expectationRequirements ? JSON.parse(rec.expectationRequirements) : {}),
-            userEmail: rec.remarksStatus || '',
-            createdAt: rec.createdAt,
-            updatedAt: rec.updatedAt,
-          };
-        } catch {
-          return {
-            id: rec.id.replace('__crow_', ''),
-            tableId: rec.property,
-            data: {},
-            userEmail: rec.remarksStatus || '',
-            createdAt: rec.createdAt,
-            updatedAt: rec.updatedAt,
-          };
-        }
-      });
+      return data
+        .map((rec) => {
+          try {
+            const parsed = JSON.parse(rec.notes || '{}');
+            return {
+              id: rec.id.replace('__crow_', ''),
+              tableId: rec.property,
+              data: parsed.data || (rec.expectationRequirements ? JSON.parse(rec.expectationRequirements) : {}),
+              userEmail: rec.remarksStatus || '',
+              createdAt: rec.createdAt,
+              updatedAt: rec.updatedAt,
+            };
+          } catch {
+            return {
+              id: rec.id.replace('__crow_', ''),
+              tableId: rec.property,
+              data: {},
+              userEmail: rec.remarksStatus || '',
+              createdAt: rec.createdAt,
+              updatedAt: rec.updatedAt,
+            };
+          }
+        })
+        .filter((r) => (r.userEmail || '').trim().toLowerCase() === cleanEmail);
     }
   } catch {}
 
@@ -318,9 +331,10 @@ export async function insertCustomTableRowToDb(row: any, userEmail?: string): Pr
   const client = getSupabaseClient();
   if (!client) return false;
 
+  const cleanEmail = (userEmail || row.userEmail || '').trim().toLowerCase();
   const rowPayload = {
     ...row,
-    userEmail: userEmail || row.userEmail || '',
+    userEmail: cleanEmail,
   };
 
   // 1. Try dedicated custom_table_rows table
@@ -447,9 +461,11 @@ export async function bulkInsertCustomTableRowsToDb(rows: any[], userEmail?: str
   const client = getSupabaseClient();
   if (!client || rows.length === 0) return false;
 
+  const cleanEmail = (userEmail || '').trim().toLowerCase();
+
   // 1. Try dedicated custom_table_rows table
   try {
-    const payload = rows.map((r) => ({ ...r, userEmail: userEmail || r.userEmail || '' }));
+    const payload = rows.map((r) => ({ ...r, userEmail: cleanEmail || r.userEmail || '' }));
     const { error } = await client.from('custom_table_rows').insert(payload);
     if (!error) return true;
   } catch {}
@@ -461,8 +477,8 @@ export async function bulkInsertCustomTableRowsToDb(rows: any[], userEmail?: str
       name: row.data?.['name'] || row.data?.['client_name'] || Object.values(row.data || {})[0] || 'Row',
       property: row.tableId,
       clientType: 'CUSTOM_ROW',
-      remarksStatus: userEmail || row.userEmail || '',
-      notes: JSON.stringify({ ...row, userEmail: userEmail || row.userEmail || '' }),
+      remarksStatus: cleanEmail || row.userEmail || '',
+      notes: JSON.stringify({ ...row, userEmail: cleanEmail || row.userEmail || '' }),
       expectationRequirements: JSON.stringify(row.data || {}),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

@@ -171,14 +171,13 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     });
   }, [tableRows, activeSearch, globalSearch, statusFilter, table.columns]);
 
-  // Status options for dropdown filter
+  // Status options for dropdown filter (strictly respect user's selected options from table creation)
   const statusOptions = useMemo(() => {
     const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
     const baseOpts = statusCol?.options && statusCol.options.length > 0
       ? statusCol.options
       : ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed'];
-    const merged = Array.from(new Set([...baseOpts, 'Hot', 'Closed Won', 'Closed Lost']));
-    return merged.filter((opt) => opt !== 'Not Interested');
+    return baseOpts.filter((opt) => opt !== 'Not Interested');
   }, [table.columns]);
 
   // Handle cell edit
@@ -638,10 +637,9 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                         // Special Select / Status column
                         const isStatusCol = col.type === 'select' || col.name.toLowerCase().includes('status');
                         if (isStatusCol) {
-                          const baseOptions = col.options && col.options.length > 0
+                          const currentOptions = col.options && col.options.length > 0
                             ? col.options
                             : ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed', 'Not Interested'];
-                          const currentOptions = Array.from(new Set([...baseOptions, 'Hot', 'Closed Won', 'Closed Lost', 'Not Interested']));
 
                           return (
                             <td key={col.id} className="p-0">
