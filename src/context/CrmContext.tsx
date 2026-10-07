@@ -39,6 +39,7 @@ import {
 } from '../services/supabaseDataService';
 import { isSupabaseConfigured, getSupabaseClient } from '../lib/supabaseClient';
 import { getStoredGoogleUser } from '../services/googleAuth';
+import { compareRowsByCreation } from '../utils/tableSorting';
 
 interface CrmContextType {
   activeTab: ActiveTab;
@@ -163,6 +164,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
           const flatRows = rowsArrays.flat().filter(
             (r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail
           );
+          flatRows.sort((a: any, b: any) => compareRowsByCreation(a, b, 'asc'));
           customRowsRef.current = flatRows;
           setCustomRows(flatRows);
         } else {
@@ -215,6 +217,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
           if (effectiveEmail && customTables.length > 0) {
             Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
               const flat = arrays.flat().filter((r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail);
+              flat.sort((a: any, b: any) => compareRowsByCreation(a, b, 'asc'));
               customRowsRef.current = flat;
               setCustomRows(flat);
             });
@@ -234,6 +237,7 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
         if (effectiveEmail && customTables.length > 0) {
           Promise.all(customTables.map((t) => fetchCustomTableRowsFromDb(t.id, effectiveEmail))).then((arrays) => {
             const flat = arrays.flat().filter((r: any) => (r.userEmail || '').trim().toLowerCase() === effectiveEmail);
+            flat.sort((a: any, b: any) => compareRowsByCreation(a, b, 'asc'));
             customRowsRef.current = flat;
             setCustomRows(flat);
           });
@@ -282,15 +286,16 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
     }
   };
 
-  const addCustomTableRow = (tableId: string, data: Record<string, any>, insertAt: 'top' | 'bottom' = 'top'): string => {
+  const addCustomTableRow = (tableId: string, data: Record<string, any>, insertAt: 'top' | 'bottom' = 'bottom'): string => {
+    const nowIso = new Date().toISOString();
     const newId = `row_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
     const newRow: CustomTableRow = {
       id: newId,
       tableId,
       userEmail: effectiveEmail,
       data,
-      createdAt: getTodayDateString(),
-      updatedAt: getTodayDateString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
     customRowsRef.current = insertAt === 'top' ? [newRow, ...customRowsRef.current] : [...customRowsRef.current, newRow];
     setCustomRows((prev) => (insertAt === 'top' ? [newRow, ...prev] : [...prev, newRow]));
@@ -327,30 +332,36 @@ export const CrmProvider: React.FC<{ children: React.ReactNode; currentUser?: st
   const duplicateCustomTableRow = (rowId: string) => {
     const existing = customRows.find((r) => r.id === rowId);
     if (!existing) return;
+    const nowIso = new Date().toISOString();
     const newId = `row_dup_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
     const newRow: CustomTableRow = {
       ...existing,
       id: newId,
       userEmail: effectiveEmail || existing.userEmail || '',
-      createdAt: getTodayDateString(),
-      updatedAt: getTodayDateString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
-    setCustomRows((prev) => [newRow, ...prev]);
+    customRowsRef.current = [...customRowsRef.current, newRow];
+    setCustomRows((prev) => [...prev, newRow]);
     insertCustomTableRowToDb(newRow, effectiveEmail);
   };
 
   const bulkAddCustomTableRows = (tableId: string, rowsData: Record<string, any>[]): number => {
     if (!rowsData || rowsData.length === 0) return 0;
-    const formatted: CustomTableRow[] = rowsData.map((data, idx) => ({
-      id: `row_bulk_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
-      tableId,
-      userEmail: effectiveEmail,
-      data,
-      createdAt: getTodayDateString(),
-      updatedAt: getTodayDateString(),
-    }));
-    customRowsRef.current = [...formatted, ...customRowsRef.current];
-    setCustomRows((prev) => [...formatted, ...prev]);
+    const baseTime = Date.now();
+    const formatted: CustomTableRow[] = rowsData.map((data, idx) => {
+      const rowIso = new Date(baseTime + idx * 10).toISOString();
+      return {
+        id: `row_bulk_${baseTime}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+        tableId,
+        userEmail: effectiveEmail,
+        data,
+        createdAt: rowIso,
+        updatedAt: rowIso,
+      };
+    });
+    customRowsRef.current = [...customRowsRef.current, ...formatted];
+    setCustomRows((prev) => [...prev, ...formatted]);
     bulkInsertCustomTableRowsToDb(formatted, effectiveEmail);
     return formatted.length;
   };

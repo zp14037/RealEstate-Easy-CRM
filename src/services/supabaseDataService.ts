@@ -280,7 +280,9 @@ export async function fetchCustomTableRowsFromDb(tableId: string, userEmail?: st
   // 1. Try dedicated custom_table_rows table
   try {
     let query = client.from('custom_table_rows').select('*').eq('tableId', tableId).eq('userEmail', cleanEmail);
-    const { data, error } = await query.order('createdAt', { ascending: false });
+    const { data, error } = await query
+      .order('createdAt', { ascending: true })
+      .order('id', { ascending: true });
     if (!error && data) {
       return data.filter((r: any) => (r.userEmail || '').trim().toLowerCase() === cleanEmail);
     }
@@ -294,7 +296,8 @@ export async function fetchCustomTableRowsFromDb(tableId: string, userEmail?: st
       .eq('clientType', 'CUSTOM_ROW')
       .eq('property', tableId)
       .eq('remarksStatus', cleanEmail)
-      .order('createdAt', { ascending: false });
+      .order('createdAt', { ascending: true })
+      .order('id', { ascending: true });
 
     if (!error && data) {
       return data

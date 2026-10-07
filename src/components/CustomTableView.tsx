@@ -18,13 +18,16 @@ import {
   UploadCloud,
   AlertCircle,
   CalendarPlus,
-  Filter
+  Filter,
+  ArrowUpDown,
+  Clock
 } from 'lucide-react';
 import { CustomTable, CustomTableRow } from '../types';
 import { EditableCell } from './EditableCell';
 import { useCrm } from '../context/CrmContext';
 import { saveDirectlyToGoogleCalendar } from '../utils/calendar';
 import { getDateOffset, getTodayDateString } from '../data/mockData';
+import { compareRowsByCreation } from '../utils/tableSorting';
 
 import { ExcelPasteDrawer } from './ExcelPasteDrawer';
 
@@ -124,9 +127,12 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
     );
   };
 
+  const [createdSortOrder, setCreatedSortOrder] = useState<'asc' | 'desc'>('asc');
+
   // Get rows belonging to this table (permanently excluding any marked Not Interested)
+  // Strictly ordered by creation timestamp ('order by created')
   const tableRows = useMemo(() => {
-    return customRows.filter((r) => {
+    const rows = customRows.filter((r) => {
       if (r.tableId !== table.id) return false;
       const statusCol = table.columns.find((c) => c.type === 'select' || c.name.toLowerCase().includes('status'));
       if (statusCol && r.data[statusCol.key] === 'Not Interested') {
@@ -134,7 +140,9 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
       }
       return true;
     });
-  }, [customRows, table.id, table.columns]);
+
+    return [...rows].sort((a, b) => compareRowsByCreation(a, b, createdSortOrder));
+  }, [customRows, table.id, table.columns, createdSortOrder]);
 
   const handleSearchSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -195,7 +203,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
   };
 
   // Add blank row
-  const handleAddBlankRow = (insertAt: 'top' | 'bottom' = 'top') => {
+  const handleAddBlankRow = (insertAt: 'top' | 'bottom' = 'bottom') => {
     const defaultData: Record<string, any> = {};
     table.columns.forEach((col) => {
       if (col.type === 'date') {
@@ -320,6 +328,21 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
             </select>
           </div>
 
+          {/* Order by Created Badge / Interactive Toggle */}
+          <button
+            type="button"
+            onClick={() => setCreatedSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-300 rounded-md shadow-2xs hover:bg-slate-50 transition-colors cursor-pointer text-xs font-semibold text-slate-700"
+            title={`Table is ordered by creation time: currently ${createdSortOrder === 'asc' ? 'Oldest First (1, 2, 3...)' : 'Newest First'}. Click to toggle.`}
+          >
+            <Clock className="w-3.5 h-3.5 text-[#D4AF37]" />
+            <span className="text-[11px] font-bold text-slate-600 uppercase">Order:</span>
+            <span className="text-xs font-bold text-[#0B1B32]">
+              Created ({createdSortOrder === 'asc' ? 'Oldest' : 'Newest'})
+            </span>
+            <ArrowUpDown className="w-3 h-3 text-slate-400" />
+          </button>
+
           {/* Bulk Import from Excel Button */}
           <button
             onClick={() => setIsPasteDrawerOpen(true)}
@@ -358,7 +381,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
 
           {/* + Add Blank Row Button */}
           <button
-            onClick={() => handleAddBlankRow('top')}
+            onClick={() => handleAddBlankRow('bottom')}
             className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-[#0B1B32] hover:bg-[#152945] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
@@ -387,8 +410,15 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
             {/* Table Header */}
             <thead>
               <tr className="bg-[#0B1B32] text-white uppercase text-[11px] font-bold tracking-wider divide-x divide-white/10 select-none">
-                <th className="py-2.5 px-3 w-12 text-center bg-[#071324] font-mono text-[10px] text-amber-400 sticky left-0 z-10">
-                  #
+                <th 
+                  onClick={() => setCreatedSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                  className="py-2.5 px-2.5 w-16 text-center bg-[#071324] font-mono text-[10px] text-amber-400 sticky left-0 z-10 cursor-pointer hover:bg-[#0c1f38] transition-colors select-none group"
+                  title={`Ordered by Created (${createdSortOrder === 'asc' ? 'Oldest First' : 'Newest First'}) - Click to toggle order`}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>#</span>
+                    <ArrowUpDown className="w-3 h-3 text-amber-400/70 group-hover:text-amber-300" />
+                  </div>
                 </th>
                 {table.columns.map((col, idx) => (
                   <th key={col.id} className="py-2.5 px-3 min-w-[160px] whitespace-nowrap">
@@ -431,7 +461,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                     </p>
                     <div className="mt-3 flex items-center justify-center gap-2">
                       <button
-                        onClick={() => handleAddBlankRow('top')}
+                        onClick={() => handleAddBlankRow('bottom')}
                         className="px-3 py-1.5 rounded bg-[#0B1B32] text-white font-bold text-xs hover:bg-[#152945] transition-colors cursor-pointer"
                       >
                         + Add Blank Row
