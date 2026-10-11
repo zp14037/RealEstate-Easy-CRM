@@ -20,7 +20,8 @@ import {
   CalendarPlus,
   Filter,
   ArrowUpDown,
-  Clock
+  Clock,
+  SlidersHorizontal
 } from 'lucide-react';
 import { CustomTable, CustomTableRow } from '../types';
 import { EditableCell } from './EditableCell';
@@ -55,6 +56,111 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
   const [isPasteDrawerOpen, setIsPasteDrawerOpen] = useState(false);
   const [syncingRowId, setSyncingRowId] = useState<string | null>(null);
   const latestDateMapRef = useRef<Record<string, string>>({});
+
+  // Column Width Resizing State
+  const getDefaultColumnWidth = (type: string, name: string) => {
+    if (type === 'tel') return 180;
+    if (type === 'date') return 240;
+    if (type === 'aed') return 160;
+    if (type === 'number') return 140;
+    if (type === 'select') return 170;
+    if (name.toLowerCase().includes('requirement') || name.toLowerCase().includes('note') || name.toLowerCase().includes('detail')) {
+      return 300;
+    }
+    return 200;
+  };
+
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem(`crm_col_widths_${table.id}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    
+    // Default initial widths
+    const defaults: Record<string, number> = {};
+    table.columns.forEach((col) => {
+      defaults[col.id] = getDefaultColumnWidth(col.type, col.name);
+    });
+    return defaults;
+  });
+
+  const resizingRef = useRef<{
+    colId: string;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  const handleMouseDownResize = (colId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const currentWidth = columnWidths[colId] || getDefaultColumnWidth('text', '');
+    const startX = e.clientX;
+
+    resizingRef.current = { colId, startX, startWidth: currentWidth };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = moveEvent.clientX - resizingRef.current.startX;
+      const newWidth = Math.max(90, Math.min(800, resizingRef.current.startWidth + delta));
+      
+      setColumnWidths((prev) => ({
+        ...prev,
+        [resizingRef.current!.colId]: newWidth
+      }));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+
+      if (resizingRef.current) {
+        setColumnWidths((current) => {
+          try {
+            localStorage.setItem(`crm_col_widths_${table.id}`, JSON.stringify(current));
+          } catch {}
+          return current;
+        });
+      }
+      resizingRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleResetColumnWidth = (colId: string, colType: string, colName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const defaultWidth = getDefaultColumnWidth(colType, colName);
+    setColumnWidths((prev) => {
+      const updated = { ...prev, [colId]: defaultWidth };
+      try {
+        localStorage.setItem(`crm_col_widths_${table.id}`, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const handleResetAllColumnWidths = () => {
+    const defaults: Record<string, number> = {};
+    table.columns.forEach((col) => {
+      defaults[col.id] = getDefaultColumnWidth(col.type, col.name);
+    });
+    setColumnWidths(defaults);
+    try {
+      localStorage.removeItem(`crm_col_widths_${table.id}`);
+    } catch {}
+    window.dispatchEvent(
+      new CustomEvent('crm-show-toast', {
+        detail: { msg: 'Column widths reset to default sizes.' },
+      })
+    );
+  };
 
   // Quick Preset Helper for Date column
   // CUMULATIVE: Every click on +1d, +3d, +1w, +4m adds to the current date no matter how many times clicked!
@@ -363,6 +469,17 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
             <span>CSV</span>
           </button>
 
+          {/* Reset Column Sizes */}
+          <button
+            type="button"
+            onClick={handleResetAllColumnWidths}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+            title="Reset all column widths to default sizes"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden sm:inline">Reset Sizes</span>
+          </button>
+
           {/* Delete All Rows */}
           {tableRows.length > 0 && (
             <button
@@ -406,13 +523,14 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
       {/* Spreadsheet Grid */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
         <div className="overflow-x-auto max-h-[calc(100vh-270px)]">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-xs border-collapse table-fixed">
             {/* Table Header */}
             <thead>
               <tr className="bg-[#0B1B32] text-white uppercase text-[11px] font-bold tracking-wider divide-x divide-white/10 select-none">
                 <th 
                   onClick={() => setCreatedSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                  className="py-2.5 px-2.5 w-16 text-center bg-[#071324] font-mono text-[10px] text-amber-400 sticky left-0 z-10 cursor-pointer hover:bg-[#0c1f38] transition-colors select-none group"
+                  style={{ width: '56px', minWidth: '56px', maxWidth: '56px' }}
+                  className="py-2.5 px-2 text-center bg-[#071324] font-mono text-[10px] text-amber-400 sticky left-0 z-10 cursor-pointer hover:bg-[#0c1f38] transition-colors select-none group"
                   title={`Ordered by Created (${createdSortOrder === 'asc' ? 'Oldest First' : 'Newest First'}) - Click to toggle order`}
                 >
                   <div className="flex items-center justify-center gap-1">
@@ -420,28 +538,49 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                     <ArrowUpDown className="w-3 h-3 text-amber-400/70 group-hover:text-amber-300" />
                   </div>
                 </th>
-                {table.columns.map((col, idx) => (
-                  <th key={col.id} className="py-2.5 px-3 min-w-[160px] whitespace-nowrap">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-amber-400/80 font-mono text-[10px]">
-                          {String.fromCharCode(65 + (idx % 26))}.
+                {table.columns.map((col, idx) => {
+                  const width = columnWidths[col.id] || getDefaultColumnWidth(col.type, col.name);
+
+                  return (
+                    <th 
+                      key={col.id} 
+                      style={{ width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` }}
+                      className="py-2.5 px-3 whitespace-nowrap relative group/col select-none overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between gap-1.5 pr-2.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-amber-400/80 font-mono text-[10px] shrink-0">
+                            {String.fromCharCode(65 + (idx % 26))}.
+                          </span>
+                          <span className="truncate font-bold" title={col.name}>{col.name}</span>
+                        </div>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-normal uppercase shrink-0 ${
+                          col.type === 'aed' && col.isLeadValue
+                            ? 'bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40'
+                            : col.type === 'aed'
+                            ? 'bg-[#D4AF37]/25 text-amber-300 font-bold'
+                            : 'bg-white/10 text-slate-300'
+                        }`}>
+                          {col.type === 'aed' ? (col.isLeadValue ? '💰 Lead Value' : 'AED') : col.type}
                         </span>
-                        <span>{col.name}</span>
                       </div>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-normal uppercase ${
-                        col.type === 'aed' && col.isLeadValue
-                          ? 'bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40'
-                          : col.type === 'aed'
-                          ? 'bg-[#D4AF37]/25 text-amber-300 font-bold'
-                          : 'bg-white/10 text-slate-300'
-                      }`}>
-                        {col.type === 'aed' ? (col.isLeadValue ? '💰 Lead Value' : 'AED') : col.type}
-                      </span>
-                    </div>
-                  </th>
-                ))}
-                <th className="py-2.5 px-2 w-20 text-center text-slate-300">
+
+                      {/* Column Resize Handle */}
+                      <div
+                        onMouseDown={(e) => handleMouseDownResize(col.id, e)}
+                        onDoubleClick={(e) => handleResetColumnWidth(col.id, col.type, col.name, e)}
+                        className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-amber-400 active:bg-amber-400 z-20 group/handle flex items-center justify-center select-none"
+                        title="Drag to resize column width · Double-click to reset"
+                      >
+                        <div className="w-[1.5px] h-3.5 bg-white/30 group-hover/handle:bg-[#0B1B32] group-hover/handle:h-full transition-all" />
+                      </div>
+                    </th>
+                  );
+                })}
+                <th 
+                  style={{ width: '76px', minWidth: '76px', maxWidth: '76px' }}
+                  className="py-2.5 px-2 text-center text-slate-300"
+                >
                   Actions
                 </th>
               </tr>
@@ -493,13 +632,18 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                       }`}
                     >
                       {/* Row Index */}
-                      <td className="py-1.5 px-2 text-center font-mono text-[10px] text-slate-400 bg-slate-100/50 select-none sticky left-0 z-10">
+                      <td 
+                        style={{ width: '56px', minWidth: '56px', maxWidth: '56px' }}
+                        className="py-1.5 px-2 text-center font-mono text-[10px] text-slate-400 bg-slate-100/50 select-none sticky left-0 z-10"
+                      >
                         {index + 1}
                       </td>
 
                       {/* Dynamic Columns */}
                       {table.columns.map((col) => {
                         const cellValue = row.data[col.key] ?? '';
+                        const colWidth = columnWidths[col.id] || getDefaultColumnWidth(col.type, col.name);
+                        const colStyle = { width: `${colWidth}px`, minWidth: `${colWidth}px`, maxWidth: `${colWidth}px` };
 
                         // Special Phone column with WhatsApp quick action
                         if (col.type === 'tel') {
@@ -511,7 +655,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                             : null;
 
                           return (
-                            <td key={col.id} className="p-0">
+                            <td key={col.id} style={colStyle} className="p-0 align-top overflow-hidden">
                               <div className="flex items-center">
                                 <EditableCell
                                   value={cellValue}
@@ -524,7 +668,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                                     href={waLink}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="p-1.5 mr-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                                    className="p-1.5 mr-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer shrink-0"
                                     title="WhatsApp Message"
                                   >
                                     <MessageSquare className="w-3.5 h-3.5" />
@@ -542,8 +686,8 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                           const timeVal = row.data[`${col.key}_time`] || '10:00';
 
                           return (
-                            <td key={col.id} className="py-1 px-2">
-                              <div className={`flex flex-col gap-1 ${isFollowUpCol ? 'min-w-[210px]' : 'min-w-[130px]'}`}>
+                            <td key={col.id} style={colStyle} className="py-1 px-2 align-top overflow-hidden">
+                              <div className="flex flex-col gap-1 w-full overflow-hidden">
                                 <div className="flex items-center gap-1.5">
                                   <input
                                     type="date"
@@ -552,7 +696,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                                       latestDateMapRef.current[`${row.id}_${col.key}`] = e.target.value;
                                       handleCellChange(row.id, col.key, e.target.value);
                                     }}
-                                    className="px-2 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-medium text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] transition-colors"
+                                    className="px-2 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-medium text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] transition-colors min-w-0 flex-1"
                                   />
                                   {isFollowUpCol && (
                                     <>
@@ -561,7 +705,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                                         value={timeVal}
                                         onChange={(e) => handleCellChange(row.id, `${col.key}_time`, e.target.value)}
                                         title="Time scheduled in Google Calendar"
-                                        className="px-1.5 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-mono font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] w-[75px]"
+                                        className="px-1.5 py-0.5 text-xs bg-slate-50 border border-slate-200 rounded font-mono font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-[#0B1B32] w-[70px] shrink-0"
                                       />
                                       {cellValue && (
                                         <button
@@ -583,7 +727,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                                 </div>
 
                                 {isFollowUpCol && (
-                                  <div className="flex items-center gap-1 text-[10px]">
+                                  <div className="flex items-center gap-1 text-[10px] overflow-hidden">
                                     <button
                                       type="button"
                                       onClick={() => handleQuickPresetDate(row.id, col.key, 0, 0)}
@@ -616,7 +760,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                                       type="button"
                                       onClick={() => handleQuickPresetDate(row.id, col.key, 0, 4)}
                                       title="Schedule follow-up in exactly 4 months"
-                                      className="px-1.5 py-0.2 rounded bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#0B1B32] border border-[#D4AF37]/40 font-bold cursor-pointer"
+                                      className="px-1.5 py-0.2 rounded bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#0B1B32] border border-[#D4AF37]/40 font-bold cursor-pointer shrink-0"
                                     >
                                       +4m ⏳
                                     </button>
@@ -630,7 +774,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                         // Special AED Currency column
                         if (col.type === 'aed') {
                           return (
-                            <td key={col.id} className="p-0">
+                            <td key={col.id} style={colStyle} className="p-0 align-top overflow-hidden">
                               <EditableCell
                                 type="number"
                                 value={cellValue}
@@ -651,7 +795,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                         // Special Plain Number column
                         if (col.type === 'number') {
                           return (
-                            <td key={col.id} className="p-0">
+                            <td key={col.id} style={colStyle} className="p-0 align-top overflow-hidden">
                               <EditableCell
                                 type="number"
                                 value={cellValue}
@@ -672,7 +816,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                             : ['New', 'Active', 'Hot', 'Follow-up', 'Interested', 'Under Negotiation', 'Closed Won', 'Closed Lost', 'Closed', 'Not Interested'];
 
                           return (
-                            <td key={col.id} className="p-0">
+                            <td key={col.id} style={colStyle} className="p-0 align-top overflow-hidden">
                               <select
                                 value={cellValue || 'New'}
                                 onChange={(e) => handleCellChange(row.id, col.key, e.target.value)}
@@ -698,7 +842,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
 
                         // Default Text column
                         return (
-                          <td key={col.id} className="p-0">
+                          <td key={col.id} style={colStyle} className="p-0 align-top overflow-hidden">
                             <EditableCell
                               value={cellValue}
                               onChange={(val) => handleCellChange(row.id, col.key, val)}
@@ -709,7 +853,7 @@ export const CustomTableView: React.FC<CustomTableViewProps> = ({ table }) => {
                       })}
 
                       {/* Row Actions */}
-                      <td className="py-1 px-2 text-center select-none">
+                      <td style={{ width: '76px', minWidth: '76px', maxWidth: '76px' }} className="py-1 px-2 text-center select-none">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"

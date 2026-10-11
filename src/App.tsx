@@ -18,7 +18,9 @@ import {
   Table as TableIcon,
   Plus,
   Trash2,
-  LogOut
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 import { getDateOffset, getTodayDateString } from './data/mockData';
 import { LoginPage } from './components/LoginPage';
@@ -41,6 +43,24 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
   } = useCrm();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('crm_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('crm_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
   const [toast, setToast] = useState<{ show: boolean; msg: string; isError?: boolean }>({ show: false, msg: '' });
 
   React.useEffect(() => {
@@ -130,22 +150,37 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
 
       {/* Sidebar Navigation: Geometric Balance Theme (#0B1B32 & #D4AF37) */}
       <aside 
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B1B32] text-white flex flex-col border-r border-[#C5A059] transform transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${
-          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed inset-y-0 left-0 z-50 bg-[#0B1B32] text-white flex flex-col border-r border-[#C5A059] transform transition-all duration-300 ease-in-out lg:static ${
+          mobileMenuOpen 
+            ? 'translate-x-0 w-64' 
+            : sidebarCollapsed 
+            ? '-translate-x-full lg:translate-x-0 lg:w-0 lg:overflow-hidden lg:border-r-0 lg:p-0' 
+            : 'translate-x-0 w-64'
         }`}
       >
         {/* Brand Header */}
-        <div className="p-6 border-b border-white/10 flex items-center justify-between">
+        <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between shrink-0">
           <div className="cursor-pointer" onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }}>
             <h1 className="text-xl font-bold tracking-tight text-[#D4AF37] font-display">XPOTENTIAL</h1>
             <p className="text-[10px] uppercase tracking-widest text-slate-400 font-medium">Real Estate Dubai · CRM</p>
           </div>
-          <button 
-            className="lg:hidden text-slate-400 hover:text-white"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {/* Desktop Close Sidebar Button */}
+            <button 
+              className="hidden lg:flex p-1.5 rounded text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              onClick={toggleSidebar}
+              title="Close sidebar to increase table width & visibility"
+            >
+              <PanelLeftClose className="w-5 h-5" />
+            </button>
+            {/* Mobile close button */}
+            <button 
+              className="lg:hidden text-slate-400 hover:text-white p-1"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Navigation Items */}
@@ -302,11 +337,16 @@ const CrmMainLayout: React.FC<CrmMainLayoutProps> = ({ onLogout, currentUser }) 
         </div>
 
         {/* Top Header Bar */}
-        <HeaderNav onLogout={onLogout} currentUser={currentUser} />
+        <HeaderNav 
+          onLogout={onLogout} 
+          currentUser={currentUser} 
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={toggleSidebar}
+        />
 
         {/* Workspace Views */}
-        <main className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
-          <div className="max-w-7xl mx-auto">
+        <main className="flex-1 overflow-y-auto p-2 sm:p-4 lg:p-5">
+          <div className={activeTab === 'dashboard' ? "max-w-7xl mx-auto" : "w-full"}>
             {activeTab === 'dashboard' && <DashboardView />}
             {customTables.find((t) => t.id === activeTab) && (
               <CustomTableView table={customTables.find((t) => t.id === activeTab)!} />

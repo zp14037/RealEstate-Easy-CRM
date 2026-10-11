@@ -103,6 +103,28 @@ export const EditableCell: React.FC<EditableCellProps> = ({
       );
     }
 
+    if (type === 'text' && currentValue.length > 100) {
+      return (
+        <textarea
+          ref={inputRef as any}
+          value={currentValue}
+          onChange={(e) => setCurrentValue(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setCurrentValue(String(value ?? ''));
+              setIsEditing(false);
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              handleSave();
+            }
+          }}
+          placeholder={placeholder}
+          rows={Math.min(6, Math.max(3, Math.ceil(currentValue.length / 40)))}
+          className={`w-full min-w-[240px] bg-white border border-[#0B1B32] p-2 text-xs text-slate-900 rounded whitespace-normal break-words focus:outline-none focus:ring-2 focus:ring-[#0B1B32] shadow-inner resize-y ${inputClassName}`}
+        />
+      );
+    }
+
     return (
       <input
         ref={inputRef as React.RefObject<HTMLInputElement>}
@@ -119,17 +141,28 @@ export const EditableCell: React.FC<EditableCellProps> = ({
 
   // Non-editing (read & click-to-edit) view
   const displayValue = formatter ? formatter(value) : (value ? String(value) : '');
+  const isLongText = String(displayValue || '').length > 100;
 
   return (
     <div
       onClick={startEditing}
       tabIndex={0}
       onFocus={startEditing}
-      className={`w-full h-full min-h-[32px] px-2.5 py-1.5 flex items-center cursor-pointer transition-all hover:bg-amber-50/50 focus:bg-amber-50/70 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] group relative ${className}`}
-      title="Click to edit cell inline"
+      className={`w-full h-full min-h-[32px] px-2.5 py-1.5 flex ${
+        isLongText ? 'items-start py-2' : 'items-center'
+      } cursor-pointer transition-all hover:bg-amber-50/50 focus:bg-amber-50/70 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] group relative ${className}`}
+      title={isLongText ? String(displayValue) : "Click to edit cell inline"}
     >
       {displayValue ? (
-        <span className="truncate block w-full text-slate-800">{displayValue}</span>
+        <span 
+          className={
+            isLongText
+              ? "whitespace-normal break-words block w-full text-slate-800 leading-relaxed text-xs select-text"
+              : "truncate block w-full text-slate-800"
+          }
+        >
+          {displayValue}
+        </span>
       ) : (
         <span className="text-slate-300 italic text-[11px] select-none">{placeholder || '—'}</span>
       )}
